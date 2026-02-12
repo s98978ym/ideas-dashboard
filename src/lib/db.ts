@@ -7,19 +7,14 @@
 
 import { PrismaClient } from '@prisma/client';
 
-// Ensure pgbouncer=true is set on DATABASE_URL for Supabase connection pooler compatibility
+// Ensure pgbouncer=true is set on DATABASE_URL for Supabase connection pooler compatibility.
+// Uses string concatenation instead of URL parsing to avoid corrupting passwords with special characters.
 function getDatasourceUrl(): string | undefined {
   const url = process.env.DATABASE_URL;
   if (!url) return undefined;
-  try {
-    const parsed = new URL(url);
-    if (!parsed.searchParams.has('pgbouncer')) {
-      parsed.searchParams.set('pgbouncer', 'true');
-    }
-    return parsed.toString();
-  } catch {
-    return url;
-  }
+  if (url.includes('pgbouncer=true')) return url;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}pgbouncer=true`;
 }
 
 // PrismaClient is attached to the `global` object in development to prevent
