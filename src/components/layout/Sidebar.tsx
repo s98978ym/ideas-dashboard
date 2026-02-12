@@ -16,6 +16,7 @@ const navItems = [
   { href: '/recipes', label: 'Recipes' },
   { href: '/drafts', label: 'Drafts' },
   { href: '/todos', label: 'TODOs' },
+  { href: '/settings', label: 'Settings' },
 ];
 
 export function Sidebar({ isOpen, onClose }: SidebarProps) {

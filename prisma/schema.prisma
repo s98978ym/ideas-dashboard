@@ -212,6 +212,19 @@ model TodoItem {
   @@index([created_at])
 }
 
+// LLM provider API key settings (encrypted)
+model LlmSetting {
+  id                String   @id @default(cuid())
+  provider          String   @unique // claude, chatgpt, gemini
+  encrypted_api_key String   // Encrypted API key
+  model_id          String?  // Preferred model ID (e.g., claude-sonnet-4-5-20250929)
+  is_enabled        Boolean  @default(true)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  @@index([provider])
+}
+
 // Job queue for async processing
 model QueueJob {
   id              String   @id @default(cuid())
