@@ -40,11 +40,11 @@ export default function WorkspacesPage() {
 
     try {
       const response = await fetch('/api/workspaces');
+      const data = await response.json();
       if (!response.ok) {
-        throw new Error('Failed to fetch workspaces');
+        throw new Error(data.message || data.error || 'Failed to fetch workspaces');
       }
 
-      const data = await response.json();
       setWorkspaces(data.workspaces || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
