@@ -358,6 +358,45 @@ export async function POST(
 }
 ```
 
+## Send Modes
+
+### user (recommended for DMs)
+- Posts as the authenticated user using their xoxp- token
+- Works in all conversation types: channels, private channels, DMs, group DMs
+- Requires user token with chat:write scope
+- Message appears as if the user typed it directly in Slack
+
+### bot
+- Posts as the Slack app bot using the xoxb- token
+- Works in: public channels (where bot is member), private channels (where bot is member), group DMs (where bot is member)
+- DOES NOT WORK in: 1:1 DMs between users
+- Bot must be invited to the channel/conversation first
+
+### copy
+- Does not send via API
+- Marks draft as "copied" and returns the text
+- User manually pastes into Slack
+- Always available as fallback
+
+## DM Send Constraints
+
+### 1:1 DM (conversation_type = 'im')
+- Bot send mode: BLOCKED (Slack API restriction)
+- UI: "Bot" option is disabled with explanation
+- Server: Returns 400 error if bot mode attempted for DM
+- Recommended: Use "user" mode or "copy" mode
+
+### Group DM (conversation_type = 'mpim')
+- Bot send mode: Only works if bot is a member of the group DM
+- If bot is not a member, error "not_in_channel" is returned
+- Fallback: Use "user" mode or "copy" mode
+
+### Error Handling
+- On send failure, error is saved to draft.last_send_error
+- Draft status remains "draft" (not "sent") on failure
+- User can retry with a different send mode
+- Error message is displayed in the UI with suggested alternatives
+
 ### 8. Thread Reply Support
 
 When replying in a thread, preserve the `thread_ts`:

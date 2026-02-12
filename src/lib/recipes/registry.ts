@@ -362,13 +362,81 @@ Example output format:
 };
 
 /**
+ * Built-in recipe: DM Reply Draft
+ * Generates draft replies for direct message conversations
+ */
+const dmReplyRecipe: RecipeDefinition = {
+  slug: 'dm_reply',
+  name: 'DM Reply Draft',
+  description: 'Draft a reply to a direct message conversation, considering recent context and tone',
+  category: 'reply',
+  version: 1,
+  variables: [
+    {
+      name: 'messages',
+      type: 'messages',
+      required: true,
+      description: 'Recent DM messages for context'
+    },
+    {
+      name: 'recipient_name',
+      type: 'user_input',
+      required: true,
+      description: 'Name of the person you are replying to'
+    },
+    {
+      name: 'user_input',
+      type: 'user_input',
+      required: false,
+      description: 'Optional guidance on what you want to say'
+    }
+  ],
+  promptTemplate: `You are helping draft a reply in a Slack direct message conversation.
+
+## Recent conversation (most recent messages):
+{{messages}}
+
+## The person you are replying to: {{recipient_name}}
+
+## Your intent / what you want to say (optional guidance):
+{{user_input}}
+
+## Instructions:
+- Draft a natural, conversational reply appropriate for a direct message
+- Match the tone of the existing conversation (formal/casual/technical)
+- Keep it concise - DMs should be brief and direct
+- If the user provided intent, incorporate it naturally
+- Provide 2-3 alternative phrasings
+
+IMPORTANT: Respond ONLY with valid JSON matching this exact schema. Do not include any text before or after the JSON.
+
+{
+  "reply": "string - the primary suggested reply",
+  "tone": "string - detected tone (casual/formal/technical/friendly)",
+  "alternative_replies": ["string - alternative phrasing 1", "string - alternative phrasing 2"],
+  "context_notes": "string - brief note about the conversation context that informed the reply"
+}`,
+  outputSchema: {
+    type: 'object',
+    required: ['reply', 'tone', 'alternative_replies'],
+    properties: {
+      reply: { type: 'string' },
+      tone: { type: 'string' },
+      alternative_replies: { type: 'array', items: { type: 'string' } },
+      context_notes: { type: 'string' }
+    }
+  }
+};
+
+/**
  * Registry of all built-in recipes
  */
 export const BUILTIN_RECIPES: RecipeDefinition[] = [
   summaryRecipe,
   ideaExtractionRecipe,
   todoExtractionRecipe,
-  replyDraftRecipe
+  replyDraftRecipe,
+  dmReplyRecipe
 ];
 
 /**

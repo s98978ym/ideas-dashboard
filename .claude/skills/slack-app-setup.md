@@ -85,6 +85,34 @@ settings:
 - **users:read** - Access user profile information
 - **team:read** - Access workspace information
 
+## User Token Scopes (for DM sync and user-mode posting)
+
+The following user scopes are requested during OAuth to enable DM synchronization and posting as the authenticated user:
+
+- `chat:write` - Post messages as the user
+- `im:read` - List DM conversations
+- `im:history` - Read DM message history
+- `mpim:read` - List group DM conversations
+- `mpim:history` - Read group DM message history
+- `channels:read` - List channels (user context)
+- `channels:history` - Read channel history (user context)
+- `groups:read` - List private channels (user context)
+- `groups:history` - Read private channel history (user context)
+- `users:read` - Read user profiles
+
+### Re-installation
+If user token scopes need to be updated:
+1. Go to Workspace Settings in the dashboard
+2. Click "Re-install" to re-authorize with updated scopes
+3. Both bot and user tokens will be refreshed
+4. Existing data is preserved
+
+### DM Considerations
+- 1:1 DMs (im): Between two users. Bot cannot post here.
+- Group DMs (mpim): Multi-party DMs. Bot can post if it's a member.
+- DM sync uses the user token, not the bot token
+- Events API also receives DM events for real-time updates
+
 ### 4. Optional User Scopes
 
 - **chat:write** - Allow sending messages as the user (not bot) after user OAuth

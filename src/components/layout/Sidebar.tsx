@@ -11,6 +11,7 @@ interface SidebarProps {
 
 const navItems = [
   { href: '/inbox', label: 'Inbox' },
+  { href: '/conversations', label: 'Conversations' },
   { href: '/workspaces', label: 'Workspaces' },
   { href: '/recipes', label: 'Recipes' },
   { href: '/drafts', label: 'Drafts' },

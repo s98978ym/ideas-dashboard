@@ -1,0 +1,169 @@
+import { prisma } from '@/lib/db';
+import { decryptToken } from '@/lib/crypto/tokens';
+
+interface DMSyncResult {
+  conversationsFound: number;
+  conversationsProcessed: number;
+  messagesAdded: number;
+  errors: string[];
+}
+
+/**
+ * Sync all DMs for a workspace using user token.
+ * Uses conversations.list(types=im,mpim) then conversations.history for each.
+ * Idempotent: skips already-saved messages via unique constraint.
+ */
+export async function syncWorkspaceDMs(workspaceId: string): Promise<DMSyncResult> {
+  const result: DMSyncResult = { conversationsFound: 0, conversationsProcessed: 0, messagesAdded: 0, errors: [] };
+
+  const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
+  if (!workspace || !workspace.encrypted_user_token) {
+    result.errors.push('Workspace not found or no user token');
+    return result;
+  }
+
+  const userToken = decryptToken(workspace.encrypted_user_token);
+
+  // Step 1: List all DM conversations
+  let cursor: string | undefined;
+  const dmConversations: any[] = [];
+
+  do {
+    const listRes = await slackFetch(userToken, 'conversations.list', {
+      types: 'im,mpim',
+      limit: '200',
+      ...(cursor ? { cursor } : {}),
+    });
+
+    if (!listRes.ok) {
+      result.errors.push(`conversations.list failed: ${listRes.error}`);
+      break;
+    }
+
+    dmConversations.push(...(listRes.channels || []));
+    cursor = listRes.response_metadata?.next_cursor;
+    result.conversationsFound = dmConversations.length;
+
+    if (cursor) await sleep(1200);
+  } while (cursor);
+
+  // Step 2: For each DM, upsert Channel and sync history
+  for (const conv of dmConversations) {
+    try {
+      // Upsert channel record
+      const channel = await prisma.channel.upsert({
+        where: {
+          workspace_id_slack_channel_id: {
+            workspace_id: workspaceId,
+            slack_channel_id: conv.id,
+          },
+        },
+        create: {
+          workspace_id: workspaceId,
+          slack_channel_id: conv.id,
+          name: conv.name || getDMName(conv),
+          is_private: true,
+          is_monitored: true,
+          conversation_type: conv.is_mpim ? 'mpim' : 'im',
+          participants: conv.members || (conv.user ? [conv.user] : []),
+        },
+        update: {
+          name: conv.name || getDMName(conv),
+          conversation_type: conv.is_mpim ? 'mpim' : 'im',
+          participants: conv.members || (conv.user ? [conv.user] : []),
+        },
+      });
+
+      // Get messages since last sync
+      const oldest = channel.last_backfill_ts || undefined;
+      let msgCursor: string | undefined;
+      let latestTs: string | undefined;
+
+      do {
+        const histRes = await slackFetch(userToken, 'conversations.history', {
+          channel: conv.id,
+          limit: '100',
+          ...(oldest ? { oldest } : {}),
+          ...(msgCursor ? { cursor: msgCursor } : {}),
+        });
+
+        if (!histRes.ok) {
+          result.errors.push(`history for ${conv.id}: ${histRes.error}`);
+          break;
+        }
+
+        for (const msg of histRes.messages || []) {
+          if (!msg.ts) continue;
+
+          try {
+            await prisma.slackMessage.create({
+              data: {
+                workspace_id: workspaceId,
+                channel_id: channel.id,
+                slack_channel_id: conv.id,
+                slack_ts: msg.ts,
+                thread_ts: msg.thread_ts || null,
+                is_thread_reply: !!(msg.thread_ts && msg.thread_ts !== msg.ts),
+                user_id: msg.user || null,
+                user_name: null,
+                text: msg.text || '',
+                raw_json: msg,
+              },
+            });
+            result.messagesAdded++;
+            if (!latestTs || msg.ts > latestTs) latestTs = msg.ts;
+          } catch (e: any) {
+            // Unique constraint = already exists, skip
+            if (!e.message?.includes('Unique constraint')) {
+              result.errors.push(`save msg ${msg.ts}: ${e.message}`);
+            }
+          }
+        }
+
+        msgCursor = histRes.response_metadata?.next_cursor;
+        if (msgCursor) await sleep(1200);
+      } while (msgCursor);
+
+      // Update last sync position
+      if (latestTs) {
+        await prisma.channel.update({
+          where: { id: channel.id },
+          data: { last_backfill_ts: latestTs },
+        });
+      }
+
+      result.conversationsProcessed++;
+      await sleep(500); // Rate limit between conversations
+    } catch (err: any) {
+      result.errors.push(`${conv.id}: ${err.message}`);
+    }
+  }
+
+  // Update workspace last sync time
+  await prisma.workspace.update({
+    where: { id: workspaceId },
+    data: { last_dm_sync_at: new Date() },
+  });
+
+  return result;
+}
+
+function getDMName(conv: any): string {
+  if (conv.is_mpim) return conv.name || `group-dm-${conv.id.slice(-4)}`;
+  return `dm-${conv.user || conv.id.slice(-4)}`;
+}
+
+async function slackFetch(token: string, method: string, params: Record<string, string>): Promise<any> {
+  const url = new URL(`https://slack.com/api/${method}`);
+  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  return res.json();
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(r => setTimeout(r, ms));
+}

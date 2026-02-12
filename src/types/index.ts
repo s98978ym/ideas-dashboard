@@ -25,7 +25,13 @@ export type AnalysisStatus = 'pending' | 'prompt_copied' | 'result_pasted' | 'pa
 export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
 // Inbox item reasons
-export type InboxReason = 'mention' | 'keyword' | 'rule' | 'related';
+export type InboxReason = 'mention' | 'keyword' | 'rule' | 'related' | 'dm';
+
+// Send mode for drafts
+export type SendMode = 'user' | 'bot' | 'copy';
+
+// Conversation types
+export type ConversationType = 'channel' | 'private_channel' | 'im' | 'mpim';
 
 // Workspace statuses
 export type WorkspaceStatus = 'active' | 'suspended' | 'uninstalled';

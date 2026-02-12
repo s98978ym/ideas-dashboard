@@ -14,10 +14,13 @@ interface Draft {
   text: string;
   status: DraftStatus;
   sent_via?: DraftSentVia;
+  send_mode: string;
+  last_send_error?: string;
   created_at: string;
   updated_at: string;
   channel?: {
     name: string;
+    conversation_type?: string;
   };
   workspace?: {
     name: string;
@@ -30,6 +33,7 @@ export default function DraftsPage() {
   const [error, setError] = useState('');
   const [editingDraft, setEditingDraft] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
+  const [sendModeSettings, setSendModeSettings] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetchDrafts();
@@ -78,39 +82,45 @@ export default function DraftsPage() {
     }
   };
 
-  const handleSendViaBot = async (draftId: string) => {
+  const handleSend = async (draftId: string, method: 'bot' | 'user_token') => {
     try {
       const response = await fetch(`/api/drafts/${draftId}/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ method: 'bot' }),
+        body: JSON.stringify({ method }),
       });
 
       if (response.ok) {
         setDrafts(drafts.map(d =>
-          d.id === draftId ? { ...d, status: 'sent', sent_via: 'bot' } : d
+          d.id === draftId ? { ...d, status: 'sent', sent_via: method, last_send_error: undefined } : d
+        ));
+      } else {
+        const errorData = await response.json();
+        setDrafts(drafts.map(d =>
+          d.id === draftId ? { ...d, last_send_error: errorData.error || 'Failed to send' } : d
         ));
       }
     } catch (err) {
       console.error('Failed to send draft:', err);
+      setDrafts(drafts.map(d =>
+        d.id === draftId ? { ...d, last_send_error: err instanceof Error ? err.message : 'Unknown error' } : d
+      ));
     }
   };
 
-  const handleSendViaUserToken = async (draftId: string) => {
+  const updateSendMode = async (draftId: string, mode: string) => {
+    setSendModeSettings({ ...sendModeSettings, [draftId]: mode });
     try {
-      const response = await fetch(`/api/drafts/${draftId}/send`, {
-        method: 'POST',
+      await fetch(`/api/drafts/${draftId}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ method: 'user_token' }),
+        body: JSON.stringify({ send_mode: mode }),
       });
-
-      if (response.ok) {
-        setDrafts(drafts.map(d =>
-          d.id === draftId ? { ...d, status: 'sent', sent_via: 'user_token' } : d
-        ));
-      }
+      setDrafts(drafts.map(d =>
+        d.id === draftId ? { ...d, send_mode: mode } : d
+      ));
     } catch (err) {
-      console.error('Failed to send draft:', err);
+      console.error('Failed to update send mode:', err);
     }
   };
 
@@ -204,11 +214,20 @@ export default function DraftsPage() {
                     className="mb-4"
                   />
                 ) : (
-                  <p className="text-gray-700 whitespace-pre-wrap">{draft.text}</p>
+                  <>
+                    <p className="text-gray-700 whitespace-pre-wrap">{draft.text}</p>
+                    {draft.last_send_error && (
+                      <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md">
+                        <p className="text-sm text-red-700">
+                          <strong>Send Error:</strong> {draft.last_send_error}
+                        </p>
+                      </div>
+                    )}
+                  </>
                 )}
               </CardBody>
 
-              <CardFooter className="flex flex-wrap gap-2">
+              <CardFooter className="flex flex-wrap gap-2 items-center">
                 {editingDraft === draft.id ? (
                   <>
                     <Button size="sm" onClick={() => handleSaveEdit(draft.id)}>
@@ -225,12 +244,34 @@ export default function DraftsPage() {
                         <Button size="sm" variant="ghost" onClick={() => handleEdit(draft)}>
                           Edit
                         </Button>
-                        <Button size="sm" onClick={() => handleSendViaBot(draft.id)}>
-                          Send via Bot
-                        </Button>
-                        <Button size="sm" variant="secondary" onClick={() => handleSendViaUserToken(draft.id)}>
-                          Send via User
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <label className="text-sm text-gray-600">Send as:</label>
+                          <select
+                            value={sendModeSettings[draft.id] || draft.send_mode || 'user'}
+                            onChange={(e) => updateSendMode(draft.id, e.target.value)}
+                            className="px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="user">User</option>
+                            <option
+                              value="bot"
+                              disabled={draft.channel?.conversation_type === 'im'}
+                            >
+                              Bot {draft.channel?.conversation_type === 'im' ? '(N/A for DMs)' : ''}
+                            </option>
+                            <option value="copy">Copy Only</option>
+                          </select>
+                        </div>
+                        {(sendModeSettings[draft.id] || draft.send_mode) === 'user' && (
+                          <Button size="sm" onClick={() => handleSend(draft.id, 'user_token')}>
+                            Send
+                          </Button>
+                        )}
+                        {(sendModeSettings[draft.id] || draft.send_mode) === 'bot' &&
+                         draft.channel?.conversation_type !== 'im' && (
+                          <Button size="sm" onClick={() => handleSend(draft.id, 'bot')}>
+                            Send
+                          </Button>
+                        )}
                       </>
                     )}
                     <Button size="sm" variant="ghost" onClick={() => handleCopyToClipboard(draft)}>

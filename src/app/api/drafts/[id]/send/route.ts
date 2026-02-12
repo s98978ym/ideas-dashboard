@@ -53,7 +53,7 @@ async function sendViaBot(
  * Send a draft
  *
  * Body: {
- *   method: 'bot' | 'user_token' | 'copy'
+ *   send_mode: 'bot' | 'user' | 'copy'  (or legacy 'method' field)
  * }
  */
 export async function POST(
@@ -63,16 +63,21 @@ export async function POST(
   try {
     const { id: draftId } = await params;
     const body = await request.json();
-    const { method } = body;
 
-    if (!method || !['bot', 'user_token', 'copy'].includes(method)) {
+    // Accept both send_mode (new) and method (legacy) for backward compatibility
+    const sendMode = body.send_mode || body.method;
+
+    // Normalize user_token to user
+    const normalizedSendMode = sendMode === 'user_token' ? 'user' : sendMode;
+
+    if (!normalizedSendMode || !['bot', 'user', 'copy'].includes(normalizedSendMode)) {
       return NextResponse.json(
-        { error: 'method is required and must be bot, user_token, or copy' },
+        { error: 'send_mode is required and must be bot, user, or copy' },
         { status: 400 }
       );
     }
 
-    // Fetch draft with workspace data
+    // Fetch draft with workspace and channel data
     const draft = await prisma.draft.findUnique({
       where: { id: draftId },
       include: {
@@ -110,10 +115,10 @@ export async function POST(
       );
     }
 
-    // Get channel Slack ID (we need the slack_channel_id, not our internal ID)
+    // Get channel Slack ID and conversation type (we need the slack_channel_id, not our internal ID)
     const channel = await prisma.channel.findUnique({
       where: { id: draft.channel_id },
-      select: { slack_channel_id: true },
+      select: { slack_channel_id: true, conversation_type: true },
     });
 
     if (!channel) {
@@ -123,17 +128,28 @@ export async function POST(
       );
     }
 
+    // Check if bot can post to this conversation
+    if (normalizedSendMode === 'bot' && channel.conversation_type === 'im') {
+      return NextResponse.json({
+        error: 'Bot cannot send messages to 1:1 DMs',
+        message: 'Slack does not allow bots to post in direct messages between users. Use "user" mode (posts as you) or "copy" mode instead.',
+        alternatives: ['user', 'copy'],
+      }, { status: 400 });
+    }
+
     let slackTs: string | undefined;
-    let sentVia = method;
+    let sentVia = normalizedSendMode;
 
     // Handle different send methods
-    if (method === 'copy') {
+    if (normalizedSendMode === 'copy') {
       // Just mark as copied, don't actually send
       await prisma.draft.update({
         where: { id: draftId },
         data: {
           status: 'copied',
           sent_via: 'copy',
+          send_mode: 'copy',
+          last_send_error: null,
         },
       });
 
@@ -143,7 +159,7 @@ export async function POST(
         text: draft.text,
         message: 'Draft marked as copied. Text returned for manual posting.',
       });
-    } else if (method === 'bot') {
+    } else if (normalizedSendMode === 'bot') {
       // Send via bot token
       if (!draft.workspace.encrypted_bot_token) {
         return NextResponse.json(
@@ -168,18 +184,23 @@ export async function POST(
         slackTs = result.ts;
       } catch (slackError) {
         console.error('Error sending via Slack bot:', slackError);
+        const errorMessage = slackError instanceof Error ? slackError.message : 'Unknown error';
+
+        // Save error to draft
+        await prisma.draft.update({
+          where: { id: draftId },
+          data: { last_send_error: errorMessage },
+        });
+
         return NextResponse.json(
           {
             error: 'Failed to send message via Slack bot',
-            message:
-              slackError instanceof Error
-                ? slackError.message
-                : 'Unknown error',
+            message: errorMessage,
           },
           { status: 502 }
         );
       }
-    } else if (method === 'user_token') {
+    } else if (normalizedSendMode === 'user') {
       // Send via user token
       if (!draft.workspace.encrypted_user_token) {
         return NextResponse.json(
@@ -208,13 +229,18 @@ export async function POST(
         slackTs = result.ts;
       } catch (slackError) {
         console.error('Error sending via Slack user token:', slackError);
+        const errorMessage = slackError instanceof Error ? slackError.message : 'Unknown error';
+
+        // Save error to draft
+        await prisma.draft.update({
+          where: { id: draftId },
+          data: { last_send_error: errorMessage },
+        });
+
         return NextResponse.json(
           {
             error: 'Failed to send message via user token',
-            message:
-              slackError instanceof Error
-                ? slackError.message
-                : 'Unknown error',
+            message: errorMessage,
           },
           { status: 502 }
         );
@@ -227,6 +253,8 @@ export async function POST(
       data: {
         status: 'sent',
         sent_via: sentVia,
+        send_mode: normalizedSendMode,
+        last_send_error: null,
       },
       include: {
         workspace: {

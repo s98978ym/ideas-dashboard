@@ -90,6 +90,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const userToken = response.authed_user?.access_token;
     const userId = response.authed_user?.id;
 
+    // Extract scopes
+    const botScopes = response.scope ? response.scope.split(',') : [];
+    const userScopes = response.authed_user?.scope ? response.authed_user.scope.split(',') : [];
+
     if (!teamId || !teamName || !botToken) {
       throw new Error('Missing required fields in OAuth response');
     }
@@ -113,7 +117,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           name: teamName,
           encrypted_bot_token: encryptedBotToken,
           encrypted_user_token: encryptedUserToken,
-          scopes: [], // TODO: Store actual scopes from response
+          scopes: botScopes,
+          authed_user_id: userId || undefined,
+          user_scopes: userScopes,
+          bot_scopes: botScopes,
           installed_by: userId || undefined,
         },
       });
@@ -127,7 +134,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           name: teamName,
           encrypted_bot_token: encryptedBotToken,
           encrypted_user_token: encryptedUserToken,
-          scopes: [], // TODO: Store actual scopes from response
+          scopes: botScopes,
+          authed_user_id: userId || undefined,
+          user_scopes: userScopes,
+          bot_scopes: botScopes,
           installed_by: userId || undefined,
         },
       });

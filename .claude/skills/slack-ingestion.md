@@ -38,6 +38,27 @@ Thread Completion (if needed)
 Mark Processed
 ```
 
+## Dual Ingestion Strategy
+
+### Real-time: Events API (channels + DMs)
+- Receives message events as they happen
+- 3-second ACK requirement, async processing via queue
+- Covers: public channels, private channels (where bot is member), DMs (where bot is participant)
+- Limitation: may miss events during downtime or deployment
+
+### Scheduled: DM Sync (DMs only)
+- Runs every 15 minutes via Vercel Cron or QStash
+- Uses user token for conversations.list + conversations.history
+- Incremental: only fetches messages newer than last_backfill_ts
+- Idempotent: duplicate messages are skipped via unique constraint
+- Catches any DMs missed by Events API
+
+### Why Both?
+- Events API provides real-time updates for immediate inbox notifications
+- DM sync provides reliable catch-up for any missed messages
+- Together they ensure no DM is lost, even during service downtime
+- DM sync also handles historical messages from before app installation
+
 ## Steps
 
 ### 1. Event Reception and Verification

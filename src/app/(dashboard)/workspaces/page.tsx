@@ -18,6 +18,8 @@ interface Workspace {
   team_id: string;
   name: string;
   status: WorkspaceStatus;
+  has_user_token: boolean;
+  last_dm_sync_at?: string;
   created_at: string;
   channels: Channel[];
 }
@@ -73,6 +75,26 @@ export default function WorkspacesPage() {
       }
     } catch (err) {
       console.error('Failed to toggle channel monitoring:', err);
+    }
+  };
+
+  const handleSyncDMs = async (workspaceId: string) => {
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/sync-dms`, {
+        method: 'POST',
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        alert(`DM sync initiated. ${data.dm_count || 0} DMs discovered.`);
+        fetchWorkspaces();
+      } else {
+        const errorData = await response.json();
+        alert(`Failed to sync DMs: ${errorData.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error('Failed to sync DMs:', err);
+      alert('Failed to sync DMs');
     }
   };
 
@@ -138,7 +160,7 @@ export default function WorkspacesPage() {
                 </Button>
               </CardHeader>
               <CardBody>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                   <div>
                     <p className="text-sm text-gray-600">Team ID</p>
                     <p className="font-mono text-sm">{workspace.team_id}</p>
@@ -151,6 +173,52 @@ export default function WorkspacesPage() {
                     <p className="text-sm text-gray-600">Channels</p>
                     <p className="text-sm">{workspace.channels.length} channels</p>
                   </div>
+                  <div>
+                    <p className="text-sm text-gray-600">User Token</p>
+                    <div className="flex items-center gap-2">
+                      {workspace.has_user_token ? (
+                        <Badge variant="success">Active</Badge>
+                      ) : (
+                        <Badge variant="warning">Missing</Badge>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* DM Sync Section */}
+                <div className="mb-4 p-4 bg-gray-50 rounded-md border border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-semibold text-sm text-gray-900">Direct Messages</h4>
+                      <p className="text-xs text-gray-600 mt-1">
+                        {workspace.last_dm_sync_at
+                          ? `Last synced: ${new Date(workspace.last_dm_sync_at).toLocaleString()}`
+                          : 'Never synced'}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      {workspace.has_user_token ? (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => handleSyncDMs(workspace.id)}
+                        >
+                          Sync DMs Now
+                        </Button>
+                      ) : (
+                        <a href={`/api/slack/oauth?workspace_id=${workspace.id}&scope=user`}>
+                          <Button size="sm" variant="warning">
+                            Install User Token
+                          </Button>
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                  {!workspace.has_user_token && (
+                    <p className="text-xs text-amber-600 mt-2">
+                      User token required to sync DMs and send messages as yourself
+                    </p>
+                  )}
                 </div>
 
                 {expandedWorkspace === workspace.id && workspace.channels.length > 0 && (
