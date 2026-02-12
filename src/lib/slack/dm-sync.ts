@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db';
 import { decryptToken } from '@/lib/crypto/tokens';
+import { batchResolveUserNames } from './client';
 
 interface DMSyncResult {
   conversationsFound: number;
@@ -79,6 +80,9 @@ export async function syncWorkspaceDMs(workspaceId: string): Promise<DMSyncResul
       let msgCursor: string | undefined;
       let latestTs: string | undefined;
 
+      // Collect all messages first, then batch-resolve user names
+      const allMessages: any[] = [];
+
       do {
         const histRes = await slackFetch(userToken, 'conversations.history', {
           channel: conv.id,
@@ -92,37 +96,42 @@ export async function syncWorkspaceDMs(workspaceId: string): Promise<DMSyncResul
           break;
         }
 
-        for (const msg of histRes.messages || []) {
-          if (!msg.ts) continue;
-
-          try {
-            await prisma.slackMessage.create({
-              data: {
-                workspace_id: workspaceId,
-                channel_id: channel.id,
-                slack_channel_id: conv.id,
-                slack_ts: msg.ts,
-                thread_ts: msg.thread_ts || null,
-                is_thread_reply: !!(msg.thread_ts && msg.thread_ts !== msg.ts),
-                user_id: msg.user || null,
-                user_name: null,
-                text: msg.text || '',
-                raw_json: msg,
-              },
-            });
-            result.messagesAdded++;
-            if (!latestTs || msg.ts > latestTs) latestTs = msg.ts;
-          } catch (e: any) {
-            // Unique constraint = already exists, skip
-            if (!e.message?.includes('Unique constraint')) {
-              result.errors.push(`save msg ${msg.ts}: ${e.message}`);
-            }
-          }
-        }
-
+        allMessages.push(...(histRes.messages || []));
         msgCursor = histRes.response_metadata?.next_cursor;
         if (msgCursor) await sleep(1200);
       } while (msgCursor);
+
+      // Batch resolve user names for this conversation
+      const userIds = allMessages.map((m) => m.user).filter(Boolean);
+      const userNameMap = await batchResolveUserNames(userToken, userIds);
+
+      for (const msg of allMessages) {
+        if (!msg.ts) continue;
+
+        try {
+          await prisma.slackMessage.create({
+            data: {
+              workspace_id: workspaceId,
+              channel_id: channel.id,
+              slack_channel_id: conv.id,
+              slack_ts: msg.ts,
+              thread_ts: msg.thread_ts || null,
+              is_thread_reply: !!(msg.thread_ts && msg.thread_ts !== msg.ts),
+              user_id: msg.user || null,
+              user_name: msg.user ? (userNameMap.get(msg.user) || null) : null,
+              text: msg.text || '',
+              raw_json: msg,
+            },
+          });
+          result.messagesAdded++;
+          if (!latestTs || msg.ts > latestTs) latestTs = msg.ts;
+        } catch (e: any) {
+          // Unique constraint = already exists, skip
+          if (!e.message?.includes('Unique constraint')) {
+            result.errors.push(`save msg ${msg.ts}: ${e.message}`);
+          }
+        }
+      }
 
       // Update last sync position
       if (latestTs) {

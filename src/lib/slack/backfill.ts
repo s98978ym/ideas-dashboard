@@ -6,7 +6,8 @@
  */
 
 import { prisma } from '@/lib/db';
-import { getWorkspaceClient, callWithRateLimit } from './client';
+import { getWorkspaceClient, callWithRateLimit, resolveUserNames } from './client';
+import { WebClient } from '@slack/web-api';
 
 export interface BackfillOptions {
   oldest?: string; // Unix timestamp
@@ -103,12 +104,17 @@ export async function backfillChannel(
         `[Slack] Fetched ${messages.length} messages (cursor: ${cursor || 'initial'})`
       );
 
+      // Batch resolve user names for this page of messages
+      const userIds = messages.map((m: any) => m.user).filter(Boolean);
+      const userNameMap = await resolveUserNames(client, userIds);
+
       // Process each message
       for (const message of messages) {
         const processed = await processBackfillMessage(
           workspace.id,
           channel.id,
-          message
+          message,
+          userNameMap
         );
 
         if (processed) {
@@ -287,7 +293,8 @@ export async function backfillAllChannels(
 async function processBackfillMessage(
   workspaceId: string,
   channelId: string,
-  message: any
+  message: any,
+  userNameMap?: Map<string, string>
 ): Promise<boolean> {
   // Skip messages without timestamp
   if (!message.ts) {
@@ -348,7 +355,7 @@ async function processBackfillMessage(
         thread_ts: message.thread_ts || null,
         is_thread_reply: !!(message.thread_ts && message.thread_ts !== message.ts),
         user_id: message.user || null,
-        user_name: null,
+        user_name: message.user && userNameMap ? (userNameMap.get(message.user) || null) : null,
         text: message.text || '',
         raw_json: message,
         created_at: new Date(parseFloat(message.ts) * 1000),
