@@ -1,0 +1,221 @@
+// Prisma schema for Slack AI Analysis Dashboard
+// Database: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Slack workspace configuration
+model Workspace {
+  id              String   @id @default(cuid())
+  team_id         String   @unique // Slack team ID
+  name            String
+  encrypted_bot_token   String? // Encrypted OAuth bot token
+  encrypted_user_token  String? // Encrypted OAuth user token
+  scopes          String[] // OAuth scopes granted
+  status          String   @default("active") // active, suspended, uninstalled
+  installed_by    String?  // Slack user ID who installed
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  // Relations
+  channels        Channel[]
+  messages        SlackMessage[]
+  analysis_runs   AnalysisRun[]
+  drafts          Draft[]
+
+  @@index([team_id])
+  @@index([status])
+}
+
+// Slack channels being monitored
+model Channel {
+  id                String   @id @default(cuid())
+  slack_channel_id  String   // Slack channel ID (e.g., C1234567890)
+  workspace_id      String
+  name              String
+  is_private        Boolean  @default(false)
+  is_monitored      Boolean  @default(true)
+  last_backfill_ts  String?  // Last message timestamp we backfilled to
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  // Relations
+  workspace         Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  messages          SlackMessage[]
+  analysis_runs     AnalysisRun[]
+
+  @@unique([workspace_id, slack_channel_id])
+  @@index([workspace_id])
+  @@index([is_monitored])
+}
+
+// Slack messages stored for analysis
+model SlackMessage {
+  id                String   @id @default(cuid())
+  slack_ts          String   // Slack message timestamp (unique message ID)
+  slack_channel_id  String   // Denormalized for quick lookups
+  workspace_id      String
+  channel_id        String
+  user_id           String?  // Slack user ID
+  user_name         String?
+  text              String   @db.Text
+  thread_ts         String?  // Parent message timestamp if in thread
+  is_thread_reply   Boolean  @default(false)
+  raw_json          Json     // Full Slack message payload
+  event_id          String?  // Slack event ID for deduplication
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  // Relations
+  workspace         Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  channel           Channel @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  inbox_items       InboxItem[]
+  todos             TodoItem[]
+  drafts            Draft[]
+
+  @@unique([workspace_id, slack_channel_id, slack_ts])
+  @@index([workspace_id, slack_channel_id])
+  @@index([event_id])
+  @@index([thread_ts])
+  @@index([created_at])
+}
+
+// Items flagged for user attention
+model InboxItem {
+  id              String   @id @default(cuid())
+  message_id      String
+  user_id         String   // User this inbox item is for
+  reason          String   // mention, keyword, rule, related
+  is_read         Boolean  @default(false)
+  is_archived     Boolean  @default(false)
+  created_at      DateTime @default(now())
+
+  // Relations
+  message         SlackMessage @relation(fields: [message_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, is_read, is_archived])
+  @@index([message_id])
+  @@index([created_at])
+}
+
+// Analysis recipe templates
+model Recipe {
+  id                String   @id @default(cuid())
+  name              String
+  slug              String   @unique
+  description       String?  @db.Text
+  category          String   // summary, ideas, todos, reply, custom
+  prompt_template   String   @db.Text
+  output_schema     Json?    // JSON schema for expected output
+  variables         Json?    // Variable definitions for template
+  version           Int      @default(1)
+  is_builtin        Boolean  @default(false)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  // Relations
+  analysis_runs     AnalysisRun[]
+
+  @@index([category])
+  @@index([is_builtin])
+}
+
+// Execution of an analysis recipe
+model AnalysisRun {
+  id              String   @id @default(cuid())
+  recipe_id       String
+  workspace_id    String
+  channel_id      String?
+  llm_provider    String   // claude, chatgpt, gemini
+  status          String   // pending, prompt_copied, result_pasted, parsed, error
+  prompt_text     String   @db.Text
+  raw_result      String?  @db.Text
+  parsed_result   Json?    // Structured output after parsing
+  error           String?  @db.Text
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  // Relations
+  recipe          Recipe @relation(fields: [recipe_id], references: [id], onDelete: Restrict)
+  workspace       Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  channel         Channel? @relation(fields: [channel_id], references: [id], onDelete: SetNull)
+  drafts          Draft[]
+  todos           TodoItem[]
+
+  @@index([workspace_id, status])
+  @@index([recipe_id])
+  @@index([created_at])
+  @@index([status])
+}
+
+// Reply drafts for Slack messages
+model Draft {
+  id              String   @id @default(cuid())
+  message_id      String?  // Optional - null for standalone drafts
+  workspace_id    String
+  channel_id      String
+  thread_ts       String?  // Thread to reply to
+  text            String   @db.Text
+  status          String   @default("draft") // draft, sent, copied
+  sent_via        String?  // bot, user_token, copy
+  analysis_run_id String?  // Optional - if generated by analysis
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  // Relations
+  message         SlackMessage? @relation(fields: [message_id], references: [id], onDelete: SetNull)
+  workspace       Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  analysis_run    AnalysisRun? @relation(fields: [analysis_run_id], references: [id], onDelete: SetNull)
+
+  @@index([workspace_id, status])
+  @@index([message_id])
+  @@index([analysis_run_id])
+  @@index([created_at])
+}
+
+// Extracted TODO items
+model TodoItem {
+  id              String   @id @default(cuid())
+  title           String
+  description     String?  @db.Text
+  status          String   @default("open") // open, doing, done
+  source_message_id String?
+  analysis_run_id String?
+  assigned_to     String?  // User ID
+  due_date        DateTime?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  // Relations
+  source_message  SlackMessage? @relation(fields: [source_message_id], references: [id], onDelete: SetNull)
+  analysis_run    AnalysisRun? @relation(fields: [analysis_run_id], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([assigned_to])
+  @@index([due_date])
+  @@index([created_at])
+}
+
+// Job queue for async processing
+model QueueJob {
+  id              String   @id @default(cuid())
+  type            String   // Job type constant
+  payload         Json     // Job data
+  status          String   @default("pending") // pending, processing, completed, failed
+  attempts        Int      @default(0)
+  max_attempts    Int      @default(3)
+  error           String?  @db.Text
+  scheduled_at    DateTime @default(now()) // When to run
+  started_at      DateTime?
+  completed_at    DateTime?
+  created_at      DateTime @default(now())
+
+  @@index([type, status])
+  @@index([status, scheduled_at])
+  @@index([created_at])
+}
