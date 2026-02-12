@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { Card, CardHeader, CardBody } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { SlackText } from '@/components/ui/SlackText';
 
 interface Message {
   id: string;
@@ -84,6 +85,16 @@ export default function ConversationDetailPage() {
     );
   }
 
+  // Build a user ID → display name map from loaded messages
+  const userMap = new Map<string, string>();
+  if (data) {
+    for (const msg of data.messages) {
+      if (msg.user_id && msg.user_name) {
+        userMap.set(msg.user_id, msg.user_name);
+      }
+    }
+  }
+
   if (!data) {
     return (
       <div className="text-center py-12">
@@ -130,7 +141,9 @@ export default function ConversationDetailPage() {
                         <Badge variant="default">reply</Badge>
                       )}
                     </div>
-                    <p className="text-gray-700 whitespace-pre-wrap text-sm">{msg.text}</p>
+                    <p className="text-gray-700 whitespace-pre-wrap text-sm">
+                      <SlackText text={msg.text} userMap={userMap} />
+                    </p>
                   </div>
                   {msg.thread_ts && !msg.is_thread_reply && (
                     <Button

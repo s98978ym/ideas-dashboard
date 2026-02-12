@@ -6,6 +6,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { RecipeRunner } from '@/components/recipes/RecipeRunner';
+import { SlackText } from '@/components/ui/SlackText';
 
 interface Message {
   id: string;
@@ -128,7 +129,9 @@ export default function ThreadPage() {
             </div>
           </CardHeader>
           <CardBody>
-            <p className="text-gray-700 whitespace-pre-wrap">{thread.message.text}</p>
+            <p className="text-gray-700 whitespace-pre-wrap">
+              <SlackText text={thread.message.text} />
+            </p>
           </CardBody>
         </Card>
 
@@ -151,7 +154,9 @@ export default function ThreadPage() {
                   </div>
                 </CardHeader>
                 <CardBody>
-                  <p className="text-gray-700 whitespace-pre-wrap">{reply.text}</p>
+                  <p className="text-gray-700 whitespace-pre-wrap">
+                    <SlackText text={reply.text} />
+                  </p>
                 </CardBody>
               </Card>
             ))}
