@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { getWorkspaceClient } from './client';
+import { getWorkspaceClient, resolveUserNames } from './client';
 
 export interface SlackEventPayload {
   token?: string;
@@ -134,6 +134,18 @@ async function handleMessageEvent(
     return;
   }
 
+  // Resolve user name from Slack API
+  let userName: string | null = null;
+  if (event.user) {
+    try {
+      const client = await getWorkspaceClient(workspaceId);
+      const nameMap = await resolveUserNames(client, [event.user]);
+      userName = nameMap.get(event.user) || null;
+    } catch (err) {
+      console.warn('[Slack] Failed to resolve user name:', err);
+    }
+  }
+
   const message = await prisma.slackMessage.create({
     data: {
       workspace_id: workspaceId,
@@ -143,7 +155,7 @@ async function handleMessageEvent(
       thread_ts: event.thread_ts || null,
       is_thread_reply: !!(event.thread_ts && event.thread_ts !== event.ts),
       user_id: event.user || null,
-      user_name: null, // Could fetch from users.info
+      user_name: userName,
       text: event.text || '',
       raw_json: event as any,
       event_id: eventId,

@@ -172,6 +172,115 @@ export async function refreshWorkspaceInfo(
 }
 
 /**
+ * Resolve Slack user IDs to display names
+ *
+ * Fetches user profiles from Slack and returns a map of user_id -> display_name.
+ * Uses in-memory cache to avoid redundant API calls within the same process.
+ *
+ * @param client - WebClient instance
+ * @param userIds - Array of Slack user IDs to resolve
+ * @returns Map of user_id to display name
+ */
+const userNameCache = new Map<string, string>();
+
+export async function resolveUserNames(
+  client: WebClient,
+  userIds: string[]
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const toFetch: string[] = [];
+
+  for (const uid of userIds) {
+    if (!uid) continue;
+    const cached = userNameCache.get(uid);
+    if (cached) {
+      result.set(uid, cached);
+    } else if (!toFetch.includes(uid)) {
+      toFetch.push(uid);
+    }
+  }
+
+  for (const uid of toFetch) {
+    try {
+      const info = await client.users.info({ user: uid });
+      if (info.ok && info.user) {
+        const profile = (info.user as any).profile || {};
+        const name =
+          profile.display_name ||
+          profile.real_name ||
+          (info.user as any).real_name ||
+          (info.user as any).name ||
+          uid;
+        userNameCache.set(uid, name);
+        result.set(uid, name);
+      }
+    } catch (error) {
+      console.warn(`[Slack] Failed to fetch user info for ${uid}:`, error);
+      result.set(uid, uid);
+    }
+    // Small delay between user lookups to respect rate limits
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
+  return result;
+}
+
+/**
+ * Resolve a single Slack user ID to a display name using a raw token
+ * (for use without a WebClient instance, e.g., in dm-sync)
+ */
+export async function resolveUserNameByToken(
+  token: string,
+  userId: string
+): Promise<string | null> {
+  const cached = userNameCache.get(userId);
+  if (cached) return cached;
+
+  try {
+    const url = new URL('https://slack.com/api/users.info');
+    url.searchParams.set('user', userId);
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json();
+    if (data.ok && data.user) {
+      const profile = data.user.profile || {};
+      const name =
+        profile.display_name ||
+        profile.real_name ||
+        data.user.real_name ||
+        data.user.name ||
+        userId;
+      userNameCache.set(userId, name);
+      return name;
+    }
+  } catch (error) {
+    console.warn(`[Slack] Failed to fetch user info for ${userId}:`, error);
+  }
+  return null;
+}
+
+/**
+ * Batch resolve user names by token (for dm-sync)
+ * Collects unique IDs and resolves them all, returning a map.
+ */
+export async function batchResolveUserNames(
+  token: string,
+  userIds: string[]
+): Promise<Map<string, string>> {
+  const unique = [...new Set(userIds.filter(Boolean))];
+  const result = new Map<string, string>();
+
+  for (const uid of unique) {
+    const name = await resolveUserNameByToken(token, uid);
+    if (name) result.set(uid, name);
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
+  return result;
+}
+
+/**
  * Batch API call helper
  *
  * Makes multiple API calls with automatic rate limiting between calls.
