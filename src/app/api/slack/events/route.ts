@@ -116,10 +116,3 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   console.log(`[Slack Events] Unknown event type: ${payload.type}`);
   return NextResponse.json({ ok: true });
 }
-
-// Disable body parsing to get raw body for signature verification
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
