@@ -272,6 +272,37 @@ This document outlines the security threat model for the Slack AI Analysis Dashb
 
 ---
 
+## Single-User Deployment Model
+
+### Assets
+- Single operator's Slack tokens (bot + user)
+- Message content from personal DMs and channels
+- User token grants access to post as the user
+
+### Threat: Unauthorized Dashboard Access
+- **Mitigation**: Basic Auth middleware (BASIC_AUTH_USER/BASIC_AUTH_PASS)
+- **Alternative**: Vercel Authentication (Vercel Pro feature)
+- **Note**: Basic Auth over HTTPS is acceptable for single-user; for shared access, upgrade to session-based auth
+
+### Threat: User Token Misuse
+- **Risk**: User token can send messages as the authenticated user and read DMs
+- **Mitigation**: Token encrypted at rest (AES-256-GCM), decrypted only for send/sync operations
+- **Mitigation**: DM sync runs on schedule, token is not exposed to frontend
+- **Mitigation**: Logs never contain tokens or message content
+
+### Threat: DM Sync Endpoint Abuse
+- **Risk**: /api/sync/dm could be triggered by anyone if exposed
+- **Mitigation**: QStash signature verification in production
+- **Mitigation**: Bearer token fallback for manual triggers
+- **Mitigation**: Rate limiting by workspace
+
+### Bot vs User Token Sending
+- Bot tokens CANNOT post to 1:1 DMs (Slack restriction)
+- Server-side guard prevents bot send_mode for im conversation_type
+- UI disables bot option for DM conversations
+
+---
+
 ## Compliance Considerations
 
 ### GDPR (if applicable)

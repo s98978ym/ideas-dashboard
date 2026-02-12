@@ -29,7 +29,7 @@ interface InboxItem {
   };
 }
 
-type FilterTab = 'all' | 'unread' | 'mentions' | 'keywords';
+type FilterTab = 'all' | 'unread' | 'dms' | 'mentions' | 'threads' | 'keywords';
 
 export default function InboxPage() {
   const [items, setItems] = useState<InboxItem[]>([]);
@@ -93,7 +93,9 @@ export default function InboxPage() {
   const filteredItems = items.filter(item => {
     if (activeFilter === 'all') return true;
     if (activeFilter === 'unread') return !item.is_read;
+    if (activeFilter === 'dms') return item.reason === 'dm' || item.reason === 'keyword';
     if (activeFilter === 'mentions') return item.reason === 'mention';
+    if (activeFilter === 'threads') return item.reason === 'related';
     if (activeFilter === 'keywords') return item.reason === 'keyword';
     return true;
   });
@@ -116,7 +118,7 @@ export default function InboxPage() {
 
       {/* Filter Tabs */}
       <div className="mb-6 flex gap-2 border-b border-gray-200">
-        {(['all', 'unread', 'mentions', 'keywords'] as FilterTab[]).map(filter => (
+        {(['all', 'unread', 'dms', 'mentions', 'threads', 'keywords'] as FilterTab[]).map(filter => (
           <button
             key={filter}
             onClick={() => setActiveFilter(filter)}

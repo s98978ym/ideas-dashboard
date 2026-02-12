@@ -23,7 +23,18 @@ const BOT_SCOPES = [
   'team:read',
 ].join(',');
 
-const USER_SCOPES = ['chat:write'].join(',');
+const USER_SCOPES = [
+  'chat:write',
+  'im:read',
+  'im:history',
+  'mpim:read',
+  'mpim:history',
+  'channels:read',
+  'channels:history',
+  'groups:read',
+  'groups:history',
+  'users:read',
+].join(',');
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const clientId = process.env.SLACK_CLIENT_ID;

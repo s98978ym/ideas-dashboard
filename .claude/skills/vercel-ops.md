@@ -79,6 +79,40 @@ ngrok http 3000
 - Events API: `https://{domain}/api/slack/events`
 - OAuth Redirect: `https://{domain}/api/slack/oauth/callback`
 
+## Cron Jobs (Vercel)
+
+### DM Sync Schedule
+Add to `vercel.json` at project root:
+```json
+{
+  "crons": [
+    {
+      "path": "/api/sync/dm",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}
+```
+
+This triggers DM sync every 15 minutes for all active workspaces.
+
+### Vercel Cron Limitations
+- Hobby plan: 1 cron job, runs daily minimum
+- Pro plan: 40 cron jobs, runs every minute minimum
+- For hobby plan, use QStash schedule instead (see QStash Setup section)
+
+### QStash Schedule Alternative
+If Vercel Cron is insufficient:
+```bash
+curl -X POST https://qstash.upstash.io/v2/schedules \
+  -H "Authorization: Bearer $QSTASH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "destination": "https://your-app.vercel.app/api/sync/dm",
+    "cron": "*/15 * * * *"
+  }'
+```
+
 ## Build & Deploy
 - Build command: `next build` (default)
 - Output directory: `.next` (default)

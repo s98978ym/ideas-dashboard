@@ -477,6 +477,19 @@ Before deploying to production, all items above must be checked off and verified
 
 ---
 
+## Single-User Mode Checklist
+- [ ] BASIC_AUTH_USER and BASIC_AUTH_PASS set in production
+- [ ] /api/slack/events is publicly accessible (no auth)
+- [ ] /api/slack/oauth and /api/slack/oauth/callback are publicly accessible
+- [ ] /api/sync/dm has QStash or Bearer auth check
+- [ ] User token scopes are minimal (im:read, im:history, mpim:read, mpim:history, chat:write, channels:read, channels:history, groups:read, groups:history, users:read)
+- [ ] Bot token scopes are minimal (channels:history, channels:read, chat:write, groups:history, groups:read, im:history, im:read, mpim:history, mpim:read, users:read, team:read)
+- [ ] Message content never appears in logs
+- [ ] Token values never appear in logs or API responses
+- [ ] Slack API errors logged by error code only, not response body
+
+---
+
 ## Additional Resources
 
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)

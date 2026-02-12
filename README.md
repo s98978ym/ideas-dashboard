@@ -13,6 +13,10 @@ The Slack AI Analysis Dashboard is a powerful Next.js application that collects 
 - **Draft management** - Create, edit, and send drafts via bot token, user token, or manual copy
 - **TODO tracking** - Organize tasks with open/doing/done states
 - **Smart inbox** - Filter messages by mentions, keywords, and relevance
+- **DM synchronization** - 1:1 and group DMs via periodic sync
+- **Send mode selection** - Post as yourself (user token), as bot, or copy to clipboard
+- **Single-user mode** - Basic Auth protection
+- **DM-aware send guards** - Bot cannot post to 1:1 DMs
 
 ## Tech Stack
 
@@ -70,7 +74,9 @@ pnpm dev
    - `app_mention`
 5. Set Request URL: `https://your-domain/api/slack/events`
 6. Set OAuth Redirect URL: `https://your-domain/api/slack/oauth/callback`
-7. Copy Client ID, Client Secret, and Signing Secret to `.env.local`
+7. Add user scopes: `chat:write`, `im:read`, `im:history`, `mpim:read`, `mpim:history`, `channels:read`, `channels:history`, `groups:read`, `groups:history`, `users:read`
+8. Both bot and user tokens are obtained in a single OAuth flow
+9. Copy Client ID, Client Secret, and Signing Secret to `.env.local`
 
 ### Environment Variables
 
@@ -96,9 +102,28 @@ QSTASH_NEXT_SIGNING_KEY="your-next-signing-key"
 
 # App URL
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
+
+# Basic Auth (optional, for single-user protection)
+BASIC_AUTH_USER="your-username"
+BASIC_AUTH_PASS="your-secure-password"
 ```
 
 See `.env.example` for all required variables.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| DATABASE_URL | Yes | PostgreSQL connection string |
+| SLACK_CLIENT_ID | Yes | Slack app client ID |
+| SLACK_CLIENT_SECRET | Yes | Slack app client secret |
+| SLACK_SIGNING_SECRET | Yes | Slack app signing secret |
+| ENCRYPTION_KEY | Yes | 64-char hex key for token encryption |
+| QSTASH_URL | Yes | Upstash QStash publish URL |
+| QSTASH_TOKEN | Yes | QStash authentication token |
+| QSTASH_CURRENT_SIGNING_KEY | Yes | QStash signature verification key |
+| QSTASH_NEXT_SIGNING_KEY | Yes | QStash rotation signing key |
+| NEXT_PUBLIC_APP_URL | Yes | Application base URL |
+| BASIC_AUTH_USER | No | Basic Auth username (set both to enable) |
+| BASIC_AUTH_PASS | No | Basic Auth password |
 
 ### Local Development with ngrok
 
@@ -139,6 +164,40 @@ The application follows a serverless-friendly architecture designed for reliabil
    - Drafts can be sent via user token (as user, if OAuth granted)
    - Drafts can be copied to clipboard for manual sending
 
+### DM Synchronization
+
+DMs are synced via two complementary mechanisms:
+1. **Events API** (real-time): Receives DM events as they happen
+2. **Scheduled Sync** (every 15 min): Uses user token to fetch DM history incrementally
+
+Configure DM sync schedule in `vercel.json`:
+```json
+{ "crons": [{ "path": "/api/sync/dm", "schedule": "*/15 * * * *" }] }
+```
+
+Manual trigger:
+```bash
+curl -X POST https://your-domain/api/sync/dm -H "Authorization: Bearer $QSTASH_TOKEN"
+```
+
+### Send Modes
+
+| Mode | Token | Works in Channels | Works in DMs | Appears as |
+|------|-------|-------------------|--------------|------------|
+| user | xoxp- | Yes | Yes | You |
+| bot | xoxb- | Yes (if member) | No (1:1 DM) | Bot |
+| copy | N/A | N/A | N/A | Manual paste |
+
+### Single-User Security
+
+Set Basic Auth credentials to protect the dashboard:
+```bash
+BASIC_AUTH_USER="your-username"
+BASIC_AUTH_PASS="your-secure-password"
+```
+Slack webhook endpoints (`/api/slack/*`) and sync endpoints are excluded from auth.
+For additional protection, enable Vercel Authentication (Pro plan).
+
 ## Project Structure
 
 ```
@@ -158,6 +217,8 @@ src/
 │   │   ├── todos/            # TODO CRUD
 │   │   ├── messages/         # Message listing + inbox
 │   │   ├── llm/              # Prompt generation + result parsing
+│   │   ├── conversations/    # Unified channel + DM listing
+│   │   ├── sync/             # DM sync endpoints
 │   │   └── workspaces/       # Workspace + channel management
 │   └── page.tsx              # Landing page
 ├── components/               # React components
@@ -166,7 +227,9 @@ src/
 │   ├── queue/                # Job queue (QStash)
 │   ├── recipes/              # Recipe engine + registry
 │   ├── slack/                # Slack client, events, backfill, verify
+│   │   ├── dm-sync.ts        # DM synchronization logic
 │   └── llm/                  # LLM provider abstraction
+├── middleware.ts             # Basic Auth protection
 ├── types/                    # TypeScript types
 └── ...
 prisma/
@@ -175,6 +238,7 @@ prisma/
 docs/
 ├── threat-model.md           # Security threat model
 ├── security-checklist.md     # Deployment security checklist
+├── architecture.md           # System architecture documentation
 .claude/skills/               # 8 Claude Code skills for development
 __tests__/                    # Unit tests
 ```

@@ -79,6 +79,26 @@ Guide security reviews of the Slack AI Analysis Dashboard, covering token encryp
 - [ ] Both current and next signing keys are checked
 - [ ] Unsigned requests are rejected in production
 
+## Single-User Mode Security
+
+### Basic Auth
+- Middleware at src/middleware.ts protects all routes except Slack webhooks
+- Credentials via BASIC_AUTH_USER and BASIC_AUTH_PASS env vars
+- If not set, auth is disabled (development mode)
+- Acceptable security for single-user over HTTPS
+
+### User Token Handling
+- User token (xoxp-) can post messages as the user and read DMs
+- Higher sensitivity than bot token
+- Encrypted at rest with same AES-256-GCM as bot token
+- Decrypted only during: send operations, DM sync jobs
+- Never exposed to frontend or logged
+
+### DM Content
+- DM messages are PII - treat with same care as channel messages
+- DM sync stores message text in database
+- Log sanitization applies: never log message content
+
 ## Data Protection
 
 ### PII Handling
