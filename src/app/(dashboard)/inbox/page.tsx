@@ -5,6 +5,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import type { InboxReason } from '@/types';
+import { SlackText } from '@/components/ui/SlackText';
 
 interface InboxItem {
   id: string;
@@ -169,8 +170,11 @@ export default function InboxPage() {
                     </div>
 
                     <p className="text-gray-700 mb-2">
-                      {item.message.text.substring(0, 200)}
-                      {item.message.text.length > 200 && '...'}
+                      <SlackText text={
+                        item.message.text.length > 200
+                          ? item.message.text.substring(0, 200) + '...'
+                          : item.message.text
+                      } />
                     </p>
 
                     <p className="text-sm text-gray-500">
