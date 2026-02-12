@@ -1,48 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getToken } from 'next-auth/jwt';
 
-// Paths that should NOT require auth (Slack needs to reach these)
+// Paths that should NOT require auth
 const PUBLIC_PATHS = [
+  '/api/auth',        // NextAuth routes
   '/api/slack/events',
   '/api/slack/oauth',
   '/api/slack/oauth/callback',
-  '/api/sync/dm', // QStash needs access (has its own auth)
+  '/api/sync/dm',     // QStash needs access (has its own auth)
+  '/login',
 ];
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Skip auth for public paths
-  if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
+  if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
   }
 
-  // Skip if Basic Auth not configured (dev mode)
-  const user = process.env.BASIC_AUTH_USER;
-  const pass = process.env.BASIC_AUTH_PASS;
-  if (!user || !pass) {
+  // Skip if Google OAuth not configured (dev mode without credentials)
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
     return NextResponse.next();
   }
 
-  // Check Authorization header
-  const authHeader = request.headers.get('authorization');
-  if (authHeader) {
-    const [scheme, encoded] = authHeader.split(' ');
-    if (scheme === 'Basic' && encoded) {
-      const decoded = atob(encoded);
-      const [u, p] = decoded.split(':');
-      if (u === user && p === pass) {
-        return NextResponse.next();
-      }
+  // Check next-auth session token
+  const token = await getToken({ req: request });
+
+  if (!token) {
+    // Redirect to login page for browser requests
+    if (!pathname.startsWith('/api/')) {
+      const loginUrl = new URL('/login', request.url);
+      loginUrl.searchParams.set('callbackUrl', pathname);
+      return NextResponse.redirect(loginUrl);
     }
+
+    // Return 401 for API requests
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Return 401 with WWW-Authenticate header
-  return new NextResponse('Authentication required', {
-    status: 401,
-    headers: {
-      'WWW-Authenticate': 'Basic realm="Slack AI Dashboard"',
-    },
-  });
+  return NextResponse.next();
 }
 
 export const config = {

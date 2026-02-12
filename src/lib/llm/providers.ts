@@ -1,137 +1,218 @@
 /**
  * LLM Provider Configuration
  *
- * Manages LLM provider settings and future API integration.
- * Currently supports manual bridge (copy/paste), with API execution
- * planned for future implementation.
+ * - Gemini: Auto-execution via Google OAuth token (user's login session)
+ * - Claude / ChatGPT: Manual via Web UI (copy/paste prompt)
  */
+
+import { prisma } from '@/lib/db';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth/options';
 
 export interface LLMProvider {
   id: 'claude' | 'chatgpt' | 'gemini';
   name: string;
-  uiUrl: string; // URL to open the LLM's web UI
-  apiConfigured: boolean; // check if API key is in env
-  supportsApi: boolean;
+  uiUrl: string;
+  supportsAutoExecute: boolean;
+  autoExecuteReady: boolean;
+  defaultModel: string;
+}
+
+const PROVIDER_DEFAULTS: Record<
+  string,
+  { name: string; uiUrl: string; defaultModel: string; supportsAutoExecute: boolean }
+> = {
+  gemini: {
+    name: 'Gemini (Google)',
+    uiUrl: 'https://gemini.google.com/',
+    defaultModel: 'gemini-2.0-flash',
+    supportsAutoExecute: true,
+  },
+  claude: {
+    name: 'Claude (Anthropic)',
+    uiUrl: 'https://claude.ai/new',
+    defaultModel: '',
+    supportsAutoExecute: false,
+  },
+  chatgpt: {
+    name: 'ChatGPT (OpenAI)',
+    uiUrl: 'https://chat.openai.com/',
+    defaultModel: '',
+    supportsAutoExecute: false,
+  },
+};
+
+/**
+ * Get all available LLM providers with their status.
+ * Gemini is "ready" if the user has a Google OAuth session.
+ */
+export async function getProviders(): Promise<LLMProvider[]> {
+  let googleConnected = false;
+
+  try {
+    const session = await getServerSession(authOptions);
+    googleConnected = !!(session?.user);
+  } catch {
+    // Outside request context or no session
+  }
+
+  // Check for stored model preference
+  const geminiSetting = await prisma.llmSetting
+    .findUnique({ where: { provider: 'gemini' } })
+    .catch(() => null);
+
+  return Object.entries(PROVIDER_DEFAULTS).map(([id, defaults]) => ({
+    id: id as LLMProvider['id'],
+    name: defaults.name,
+    uiUrl: defaults.uiUrl,
+    supportsAutoExecute: defaults.supportsAutoExecute,
+    autoExecuteReady: id === 'gemini' ? googleConnected : false,
+    defaultModel:
+      id === 'gemini' ? geminiSetting?.model_id || defaults.defaultModel : defaults.defaultModel,
+  }));
 }
 
 /**
- * Get all available LLM providers with their configuration status
+ * Get a specific provider
  */
-export function getProviders(): LLMProvider[] {
-  return [
-    {
-      id: 'claude',
-      name: 'Claude (Anthropic)',
-      uiUrl: 'https://claude.ai/new',
-      apiConfigured: !!process.env.ANTHROPIC_API_KEY,
-      supportsApi: true
+export async function getProvider(id: string): Promise<LLMProvider | undefined> {
+  const providers = await getProviders();
+  return providers.find((p) => p.id === id);
+}
+
+/**
+ * Save Gemini model preference
+ */
+export async function saveGeminiModel(modelId: string): Promise<void> {
+  await prisma.llmSetting.upsert({
+    where: { provider: 'gemini' },
+    create: {
+      provider: 'gemini',
+      encrypted_api_key: '__oauth__',
+      model_id: modelId,
+      is_enabled: true,
     },
-    {
-      id: 'chatgpt',
-      name: 'ChatGPT (OpenAI)',
-      uiUrl: 'https://chat.openai.com/',
-      apiConfigured: !!process.env.OPENAI_API_KEY,
-      supportsApi: true
+    update: { model_id: modelId },
+  });
+}
+
+/**
+ * Refresh Google access token if expired.
+ * Returns a fresh access token.
+ */
+async function refreshGoogleToken(userId: string): Promise<string> {
+  const account = await prisma.account.findFirst({
+    where: { userId, provider: 'google' },
+  });
+
+  if (!account) {
+    throw new Error('Google account not linked. Please log in again.');
+  }
+
+  // Check if token is still valid (5 min buffer)
+  const now = Math.floor(Date.now() / 1000);
+  if (account.access_token && account.expires_at && account.expires_at > now + 300) {
+    return account.access_token;
+  }
+
+  // Refresh the token
+  if (!account.refresh_token) {
+    throw new Error('No refresh token available. Please log in again with Google.');
+  }
+
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: process.env.GOOGLE_CLIENT_ID!,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+      grant_type: 'refresh_token',
+      refresh_token: account.refresh_token,
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Failed to refresh Google token: ${err}`);
+  }
+
+  const tokens = await response.json();
+
+  // Update stored token
+  await prisma.account.update({
+    where: { id: account.id },
+    data: {
+      access_token: tokens.access_token,
+      expires_at: tokens.expires_in
+        ? Math.floor(Date.now() / 1000) + tokens.expires_in
+        : undefined,
     },
-    {
-      id: 'gemini',
-      name: 'Gemini (Google)',
-      uiUrl: 'https://gemini.google.com/',
-      apiConfigured: !!process.env.GOOGLE_AI_API_KEY,
-      supportsApi: true
-    }
-  ];
+  });
+
+  return tokens.access_token;
 }
 
 /**
- * Get a specific LLM provider by ID
+ * Execute prompt via Gemini using Google OAuth token.
+ * Calls the Generative Language REST API directly with Bearer token.
  */
-export function getProvider(id: string): LLMProvider | undefined {
-  const providers = getProviders();
-  return providers.find(provider => provider.id === id);
-}
-
-/**
- * Check if a provider has API key configured
- */
-export function isProviderConfigured(providerId: string): boolean {
-  const provider = getProvider(providerId);
-  return provider?.apiConfigured || false;
-}
-
-/**
- * Get the environment variable name for a provider's API key
- */
-export function getProviderEnvVar(providerId: string): string | undefined {
-  const envVarMap: Record<string, string> = {
-    claude: 'ANTHROPIC_API_KEY',
-    chatgpt: 'OPENAI_API_KEY',
-    gemini: 'GOOGLE_AI_API_KEY'
-  };
-
-  return envVarMap[providerId];
-}
-
-/**
- * Execute prompt via LLM API
- *
- * STUB: This is a placeholder for future API integration.
- * Currently throws an error indicating the feature is not yet implemented.
- *
- * @param providerId - The LLM provider to use ('claude', 'chatgpt', or 'gemini')
- * @param prompt - The prompt to send to the LLM
- * @returns Promise<string> - The LLM's response
- * @throws Error - Always throws as API execution is not yet implemented
- */
-export async function executeViaApi(
-  providerId: string,
-  prompt: string
+export async function executeWithGeminiOAuth(
+  userId: string,
+  prompt: string,
+  model?: string
 ): Promise<string> {
-  const provider = getProvider(providerId);
+  const accessToken = await refreshGoogleToken(userId);
 
-  if (!provider) {
-    throw new Error(`Unknown provider: ${providerId}`);
+  const geminiModel = model || 'gemini-2.0-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Gemini API error (${response.status}): ${errText}`);
   }
 
-  // Check if API key is configured
-  if (!provider.apiConfigured) {
-    const envVar = getProviderEnvVar(providerId);
-    throw new Error(
-      `API execution not yet implemented. Please configure ${envVar} environment variable to enable API access for ${provider.name}.`
-    );
+  const data = await response.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+  if (!text) {
+    throw new Error('No text response from Gemini');
   }
 
-  // Even if configured, API execution is not yet implemented
-  throw new Error(
-    `API execution coming soon. For now, please use the manual bridge: copy the prompt to ${provider.name} UI and paste back the result.`
-  );
+  return text;
 }
 
 /**
- * Get instructions for manual bridge workflow
+ * Get Web UI instructions for manual providers
  */
-export function getManualBridgeInstructions(providerId: string): {
+export function getWebUiInstructions(providerId: string): {
   provider: string;
   url: string;
   steps: string[];
 } {
-  const provider = getProvider(providerId);
-
-  if (!provider) {
-    throw new Error(`Unknown provider: ${providerId}`);
-  }
+  const defaults = PROVIDER_DEFAULTS[providerId];
+  if (!defaults) throw new Error(`Unknown provider: ${providerId}`);
 
   return {
-    provider: provider.name,
-    url: provider.uiUrl,
+    provider: defaults.name,
+    url: defaults.uiUrl,
     steps: [
-      `Open ${provider.name} in a new tab: ${provider.uiUrl}`,
-      'Copy the generated prompt from this application',
-      `Paste the prompt into ${provider.name}`,
-      'Wait for the LLM to generate a response',
-      'Copy the entire JSON response from the LLM',
-      'Paste the response back into this application to parse and save the results'
-    ]
+      'プロンプトをコピー',
+      `${defaults.name}を新しいタブで開く: ${defaults.uiUrl}`,
+      'プロンプトを貼り付けて実行',
+      'JSON形式のレスポンスをコピー',
+      'このアプリに戻って結果を貼り付け',
+    ],
   };
 }
 
@@ -140,44 +221,4 @@ export function getManualBridgeInstructions(providerId: string): {
  */
 export function isValidProviderId(id: string): id is 'claude' | 'chatgpt' | 'gemini' {
   return ['claude', 'chatgpt', 'gemini'].includes(id);
-}
-
-/**
- * Get default provider based on configuration
- * Prefers Claude if configured, otherwise returns first configured provider
- */
-export function getDefaultProvider(): LLMProvider {
-  const providers = getProviders();
-
-  // Prefer Claude if configured
-  const claude = providers.find(p => p.id === 'claude');
-  if (claude?.apiConfigured) {
-    return claude;
-  }
-
-  // Return first configured provider
-  const configured = providers.find(p => p.apiConfigured);
-  if (configured) {
-    return configured;
-  }
-
-  // Default to Claude even if not configured (for manual bridge)
-  return providers[0];
-}
-
-/**
- * Get provider statistics
- */
-export function getProviderStats(): {
-  total: number;
-  configured: number;
-  unconfigured: number;
-} {
-  const providers = getProviders();
-
-  return {
-    total: providers.length,
-    configured: providers.filter(p => p.apiConfigured).length,
-    unconfigured: providers.filter(p => !p.apiConfigured).length
-  };
 }

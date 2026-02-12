@@ -30,7 +30,7 @@ describe('OAuth User Token Handling', () => {
       authed_user: {
         id: 'U_USER_456',
         // No access_token for user
-      },
+      } as { id: string; access_token?: string },
     };
 
     const userToken = oauthResponse.authed_user?.access_token;

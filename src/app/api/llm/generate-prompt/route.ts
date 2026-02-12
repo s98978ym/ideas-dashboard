@@ -175,7 +175,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get provider URLs
-    const providers = getProviders();
+    const providers = await getProviders();
     const providerUrls: Record<string, string> = {};
     for (const provider of providers) {
       providerUrls[provider.id] = provider.uiUrl;
