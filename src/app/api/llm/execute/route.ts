@@ -1,40 +1,44 @@
 /**
  * POST /api/llm/execute
  *
- * One-click auto-execution: generates prompt, calls LLM API, parses result.
+ * Auto-execution for Gemini via Google OAuth.
+ * Claude/ChatGPT are manual (Web UI) — use generate-prompt instead.
  *
  * Body: {
  *   recipe_slug: string,
- *   llm_provider: 'claude' | 'chatgpt' | 'gemini',
  *   workspace_id?: string,
  *   channel_id?: string,
- *   time_range?: string,
- *   variables?: Record<string, any>
+ *   variables?: Record<string, any>,
+ *   model?: string
  * }
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth/options';
 import { prisma } from '@/lib/db';
 import { getBuiltinRecipe, RecipeDefinition } from '@/lib/recipes/registry';
 import { generatePrompt, SlackMessageForPrompt, parseResult } from '@/lib/recipes/engine';
-import { executeViaApi, getProvider } from '@/lib/llm/providers';
+import { executeWithGeminiOAuth } from '@/lib/llm/providers';
 
 export async function POST(request: NextRequest) {
   try {
+    // Require authenticated session
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+    }
+
+    const userId = (session.user as any).id;
+    if (!userId) {
+      return NextResponse.json({ error: 'User ID not found in session' }, { status: 401 });
+    }
+
     const body = await request.json();
-    const { recipe_slug, llm_provider = 'claude', workspace_id, channel_id, variables = {} } = body;
+    const { recipe_slug, workspace_id, channel_id, variables = {}, model } = body;
 
     if (!recipe_slug) {
       return NextResponse.json({ error: 'recipe_slug is required' }, { status: 400 });
-    }
-
-    // Check provider is configured
-    const provider = await getProvider(llm_provider);
-    if (!provider?.apiConfigured) {
-      return NextResponse.json(
-        { error: `${llm_provider} is not configured. Add your API key in Settings.` },
-        { status: 400 }
-      );
     }
 
     // Load recipe
@@ -59,7 +63,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Recipe not found' }, { status: 404 });
     }
 
-    // Build prompt variables (fetch messages from DB if needed)
+    // Build prompt variables
     const promptVars: Record<string, unknown> = { ...variables };
 
     if (channel_id) {
@@ -97,7 +101,7 @@ export async function POST(request: NextRequest) {
           recipe_id: recipe.slug,
           workspace_id,
           channel_id: channel_id || null,
-          llm_provider,
+          llm_provider: 'gemini',
           status: 'pending',
           prompt_text: prompt,
         },
@@ -105,19 +109,19 @@ export async function POST(request: NextRequest) {
       analysisRunId = run.id;
     }
 
-    // Execute via API
+    // Execute via Gemini OAuth
     let rawResult: string;
     try {
-      rawResult = await executeViaApi(llm_provider, prompt);
+      rawResult = await executeWithGeminiOAuth(userId, prompt, model);
     } catch (err) {
       if (analysisRunId) {
         await prisma.analysisRun.update({
           where: { id: analysisRunId },
-          data: { status: 'error', error: err instanceof Error ? err.message : 'API call failed' },
+          data: { status: 'error', error: err instanceof Error ? err.message : 'Gemini call failed' },
         });
       }
       return NextResponse.json(
-        { error: 'LLM API call failed', message: err instanceof Error ? err.message : 'Unknown' },
+        { error: 'Gemini execution failed', message: err instanceof Error ? err.message : 'Unknown' },
         { status: 502 }
       );
     }
@@ -131,8 +135,8 @@ export async function POST(request: NextRequest) {
         data: {
           status: parsed.success ? 'parsed' : 'error',
           raw_result: rawResult,
-          parsed_result: parsed.success ? (parsed.data as object) : null,
-          error: parsed.success ? null : parsed.errors?.join('; '),
+          parsed_result: parsed.success ? (parsed.data as object) : undefined,
+          error: parsed.success ? undefined : parsed.errors?.join('; '),
         },
       });
     }
@@ -143,7 +147,7 @@ export async function POST(request: NextRequest) {
       parsed_data: parsed.data,
       errors: parsed.errors,
       analysis_run_id: analysisRunId,
-      provider: llm_provider,
+      provider: 'gemini',
       recipe: { slug: recipe.slug, name: recipe.name },
     });
   } catch (error) {

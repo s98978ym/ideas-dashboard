@@ -4,12 +4,13 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '../ui/Button';
 import { Textarea } from '../ui/Textarea';
 import { Badge } from '../ui/Badge';
-import type { LLMProvider } from '@/types';
 
 interface ProviderInfo {
   id: string;
   name: string;
-  apiConfigured: boolean;
+  uiUrl: string;
+  supportsAutoExecute: boolean;
+  autoExecuteReady: boolean;
 }
 
 interface RecipeRunnerProps {
@@ -26,7 +27,7 @@ export function RecipeRunner({ recipeSlug, recipeName, onComplete, onClose }: Re
   const [workspaceId, setWorkspaceId] = useState('');
   const [channelId, setChannelId] = useState('');
   const [timeRange, setTimeRange] = useState('24h');
-  const [llmProvider, setLlmProvider] = useState<LLMProvider>('claude');
+  const [selectedProvider, setSelectedProvider] = useState('gemini');
   const [generatedPrompt, setGeneratedPrompt] = useState('');
   const [resultText, setResultText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -39,14 +40,14 @@ export function RecipeRunner({ recipeSlug, recipeName, onComplete, onClose }: Re
       .then((r) => r.json())
       .then((data) => {
         setProviders(data.providers || []);
-        const configured = (data.providers || []).find((p: ProviderInfo) => p.apiConfigured);
-        if (configured) setLlmProvider(configured.id as LLMProvider);
       })
       .catch(() => {});
   }, []);
 
-  const selectedProviderConfigured = providers.find((p) => p.id === llmProvider)?.apiConfigured;
+  const currentProvider = providers.find((p) => p.id === selectedProvider);
+  const canAutoExecute = currentProvider?.supportsAutoExecute && currentProvider?.autoExecuteReady;
 
+  // Auto-execute with Gemini OAuth
   const handleAutoExecute = async () => {
     setIsLoading(true);
     setError('');
@@ -58,7 +59,6 @@ export function RecipeRunner({ recipeSlug, recipeName, onComplete, onClose }: Re
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           recipe_slug: recipeSlug,
-          llm_provider: llmProvider,
           workspace_id: workspaceId,
           channel_id: channelId,
           time_range: timeRange,
@@ -72,13 +72,14 @@ export function RecipeRunner({ recipeSlug, recipeName, onComplete, onClose }: Re
       setCurrentStep('complete');
       if (onComplete) onComplete();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : 'エラーが発生しました');
       setCurrentStep('select');
     } finally {
       setIsLoading(false);
     }
   };
 
+  // Generate prompt for manual copy/paste (Claude, ChatGPT)
   const handleGeneratePrompt = async () => {
     setIsLoading(true);
     setError('');
@@ -88,31 +89,33 @@ export function RecipeRunner({ recipeSlug, recipeName, onComplete, onClose }: Re
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          recipe_slug: recipeSlug,
-          workspace_id: workspaceId,
-          channel_id: channelId,
-          time_range: timeRange,
-          llm_provider: llmProvider,
+          recipeSlug,
+          variables: {
+            workspaceId,
+            channelId,
+          },
         }),
       });
 
-      if (!response.ok) throw new Error('Failed to generate prompt');
+      if (!response.ok) throw new Error('プロンプト生成に失敗しました');
       const data = await response.json();
       setGeneratedPrompt(data.prompt);
       setCurrentStep('prompt');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : 'エラーが発生しました');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleCopyPrompt = async () => {
+  const handleCopyAndOpen = async () => {
     try {
       await navigator.clipboard.writeText(generatedPrompt);
+      const url = currentProvider?.uiUrl;
+      if (url) window.open(url, '_blank');
       setCurrentStep('paste');
     } catch {
-      setError('Failed to copy to clipboard');
+      setError('クリップボードへのコピーに失敗しました');
     }
   };
 
@@ -132,11 +135,11 @@ export function RecipeRunner({ recipeSlug, recipeName, onComplete, onClose }: Re
         }),
       });
 
-      if (!response.ok) throw new Error('Failed to parse result');
+      if (!response.ok) throw new Error('結果の解析に失敗しました');
       setCurrentStep('complete');
       if (onComplete) onComplete();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : 'エラーが発生しました');
     } finally {
       setIsLoading(false);
     }
@@ -148,11 +151,11 @@ export function RecipeRunner({ recipeSlug, recipeName, onComplete, onClose }: Re
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-gray-900">Run Recipe: {recipeName}</h2>
+            <h2 className="text-xl font-semibold text-gray-900">レシピ実行: {recipeName}</h2>
             <div className="mt-1 flex items-center gap-2">
-              <Badge variant={currentStep === 'select' ? 'info' : 'default'}>1. Setup</Badge>
-              <Badge variant={currentStep === 'executing' || currentStep === 'prompt' || currentStep === 'paste' ? 'info' : 'default'}>2. Execute</Badge>
-              <Badge variant={currentStep === 'complete' ? 'success' : 'default'}>3. Complete</Badge>
+              <Badge variant={currentStep === 'select' ? 'info' : 'default'}>1. 設定</Badge>
+              <Badge variant={['executing', 'prompt', 'paste'].includes(currentStep) ? 'info' : 'default'}>2. 実行</Badge>
+              <Badge variant={currentStep === 'complete' ? 'success' : 'default'}>3. 完了</Badge>
             </div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl font-bold">
@@ -171,103 +174,117 @@ export function RecipeRunner({ recipeSlug, recipeName, onComplete, onClose }: Re
           {currentStep === 'select' && (
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Workspace</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">ワークスペース</label>
                 <select value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md">
-                  <option value="">Select workspace...</option>
+                  <option value="">選択してください...</option>
                   <option value="ws_1">Workspace 1</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Channel</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">チャンネル</label>
                 <select value={channelId} onChange={(e) => setChannelId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md">
-                  <option value="">Select channel...</option>
+                  <option value="">選択してください...</option>
                   <option value="ch_1">general</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Time Range</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">期間</label>
                 <select value={timeRange} onChange={(e) => setTimeRange(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md">
-                  <option value="24h">Last 24 hours</option>
-                  <option value="7d">Last 7 days</option>
-                  <option value="30d">Last 30 days</option>
+                  <option value="24h">直近24時間</option>
+                  <option value="7d">直近7日間</option>
+                  <option value="30d">直近30日間</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">LLM Provider</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">LLMプロバイダー</label>
                 <div className="space-y-2">
                   {providers.map((p) => (
                     <label key={p.id} className="flex items-center gap-2">
-                      <input type="radio" name="llm_provider" value={p.id} checked={llmProvider === p.id} onChange={(e) => setLlmProvider(e.target.value as LLMProvider)} />
+                      <input
+                        type="radio"
+                        name="llm_provider"
+                        value={p.id}
+                        checked={selectedProvider === p.id}
+                        onChange={(e) => setSelectedProvider(e.target.value)}
+                      />
                       <span className="text-sm">{p.name}</span>
-                      {p.apiConfigured && <Badge variant="success">API Ready</Badge>}
+                      {p.supportsAutoExecute && p.autoExecuteReady && (
+                        <Badge variant="success">自動実行可能</Badge>
+                      )}
+                      {p.supportsAutoExecute && !p.autoExecuteReady && (
+                        <Badge variant="default">要ログイン</Badge>
+                      )}
+                      {!p.supportsAutoExecute && (
+                        <Badge variant="default">手動 (WebUI)</Badge>
+                      )}
                     </label>
                   ))}
-                  {providers.length === 0 && (
-                    <>
-                      {(['claude', 'chatgpt', 'gemini'] as LLMProvider[]).map((id) => (
-                        <label key={id} className="flex items-center gap-2">
-                          <input type="radio" name="llm_provider" value={id} checked={llmProvider === id} onChange={(e) => setLlmProvider(e.target.value as LLMProvider)} />
-                          <span className="text-sm capitalize">{id}</span>
-                        </label>
-                      ))}
-                    </>
-                  )}
                 </div>
               </div>
 
               <div className="flex gap-2">
-                {selectedProviderConfigured && (
-                  <Button onClick={handleAutoExecute} disabled={!workspaceId || !channelId || isLoading} className="flex-1">
-                    {isLoading ? 'Executing...' : 'Auto Execute'}
+                {canAutoExecute && (
+                  <Button
+                    onClick={handleAutoExecute}
+                    disabled={!workspaceId || !channelId || isLoading}
+                    className="flex-1"
+                  >
+                    {isLoading ? '実行中...' : 'Geminiで自動実行'}
                   </Button>
                 )}
-                <Button onClick={handleGeneratePrompt} disabled={!workspaceId || !channelId || isLoading} variant={selectedProviderConfigured ? 'secondary' : 'primary'} className="flex-1">
-                  {isLoading ? 'Generating...' : 'Manual (Copy/Paste)'}
+                <Button
+                  onClick={handleGeneratePrompt}
+                  disabled={!workspaceId || !channelId || isLoading}
+                  variant={canAutoExecute ? 'secondary' : 'primary'}
+                  className="flex-1"
+                >
+                  {isLoading ? '生成中...' : 'プロンプトをコピーして手動実行'}
                 </Button>
               </div>
-
-              {!providers.some((p) => p.apiConfigured) && (
-                <p className="text-sm text-gray-500">
-                  No API keys configured.{' '}
-                  <a href="/settings" className="text-blue-600 hover:underline">Add API keys in Settings</a>{' '}
-                  to enable auto-execution.
-                </p>
-              )}
             </div>
           )}
 
           {currentStep === 'executing' && (
             <div className="text-center py-12">
               <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-4" />
-              <p className="text-gray-700 font-medium">Executing with {providers.find((p) => p.id === llmProvider)?.name || llmProvider}...</p>
-              <p className="text-sm text-gray-500 mt-2">Generating prompt, calling API, and parsing results</p>
+              <p className="text-gray-700 font-medium">Geminiで実行中...</p>
+              <p className="text-sm text-gray-500 mt-2">プロンプト生成 → Gemini API実行 → 結果解析</p>
             </div>
           )}
 
           {currentStep === 'prompt' && (
             <div className="space-y-4">
-              <Textarea label="Generated Prompt" value={generatedPrompt} readOnly rows={12} className="font-mono text-sm" />
+              <Textarea label="生成されたプロンプト" value={generatedPrompt} readOnly rows={12} className="font-mono text-sm" />
               <div className="flex gap-2">
-                <Button onClick={handleCopyPrompt} className="flex-1">Copy to Clipboard</Button>
-                <Button variant="secondary" onClick={() => setCurrentStep('select')}>Back</Button>
+                <Button onClick={handleCopyAndOpen} className="flex-1">
+                  コピーして{currentProvider?.name || 'LLM'}を開く
+                </Button>
+                <Button variant="secondary" onClick={() => setCurrentStep('select')}>戻る</Button>
               </div>
               <p className="text-sm text-gray-600">
-                Copy the prompt above and paste it into your LLM ({llmProvider}). Then paste the response in the next step.
+                プロンプトをコピーして{currentProvider?.name || 'LLM'}に貼り付けてください。結果を次のステップで貼り付けます。
               </p>
             </div>
           )}
 
           {currentStep === 'paste' && (
             <div className="space-y-4">
-              <Textarea label="Paste LLM Response (JSON format)" value={resultText} onChange={(e) => setResultText(e.target.value)} rows={12} className="font-mono text-sm" placeholder='{"type": "summary", "data": {...}}' />
+              <Textarea
+                label="LLMのレスポンスを貼り付け (JSON形式)"
+                value={resultText}
+                onChange={(e) => setResultText(e.target.value)}
+                rows={12}
+                className="font-mono text-sm"
+                placeholder='{"type": "summary", "data": {...}}'
+              />
               <div className="flex gap-2">
                 <Button onClick={handleParseResult} disabled={!resultText || isLoading} className="flex-1">
-                  {isLoading ? 'Parsing...' : 'Parse & Save'}
+                  {isLoading ? '解析中...' : '解析して保存'}
                 </Button>
-                <Button variant="secondary" onClick={() => setCurrentStep('prompt')}>Back</Button>
+                <Button variant="secondary" onClick={() => setCurrentStep('prompt')}>戻る</Button>
               </div>
             </div>
           )}
@@ -275,15 +292,15 @@ export function RecipeRunner({ recipeSlug, recipeName, onComplete, onClose }: Re
           {currentStep === 'complete' && (
             <div className="text-center py-8">
               <div className="text-green-600 text-5xl mb-4">&#10003;</div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Analysis Complete!</h3>
-              <p className="text-gray-600 mb-4">Results have been saved successfully.</p>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">分析完了!</h3>
+              <p className="text-gray-600 mb-4">結果が保存されました。</p>
               {autoResult && (
                 <details className="text-left mb-4">
-                  <summary className="text-sm text-gray-500 cursor-pointer hover:text-gray-700">View raw result</summary>
+                  <summary className="text-sm text-gray-500 cursor-pointer hover:text-gray-700">結果を表示</summary>
                   <pre className="mt-2 p-3 bg-gray-50 rounded-md text-xs overflow-auto max-h-60">{autoResult}</pre>
                 </details>
               )}
-              <Button onClick={onClose}>Close</Button>
+              <Button onClick={onClose}>閉じる</Button>
             </div>
           )}
         </div>

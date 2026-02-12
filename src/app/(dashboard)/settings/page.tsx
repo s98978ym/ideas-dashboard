@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSession, signOut } from 'next-auth/react';
 import { Card, CardHeader, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -8,16 +9,23 @@ import { Badge } from '@/components/ui/Badge';
 interface Provider {
   id: string;
   name: string;
-  apiConfigured: boolean;
+  uiUrl: string;
+  supportsAutoExecute: boolean;
+  autoExecuteReady: boolean;
   defaultModel: string;
 }
 
+const GEMINI_MODELS = [
+  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (高速)' },
+  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (高精度)' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (バランス)' },
+];
+
 export default function SettingsPage() {
+  const { data: session } = useSession();
   const [providers, setProviders] = useState<Provider[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [editingProvider, setEditingProvider] = useState<string | null>(null);
-  const [apiKey, setApiKey] = useState('');
-  const [modelId, setModelId] = useState('');
+  const [geminiModel, setGeminiModel] = useState('gemini-2.0-flash');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -30,77 +38,43 @@ export default function SettingsPage() {
       const res = await fetch('/api/settings/llm');
       const data = await res.json();
       setProviders(data.providers || []);
+      const gemini = (data.providers || []).find((p: Provider) => p.id === 'gemini');
+      if (gemini?.defaultModel) setGeminiModel(gemini.defaultModel);
     } catch {
-      setMessage('Failed to load settings');
+      setMessage('設定の読み込みに失敗しました');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleSave = async (providerId: string) => {
-    if (!apiKey.trim()) return;
+  const handleSaveModel = async () => {
     setSaving(true);
     setMessage('');
-
     try {
       const res = await fetch('/api/settings/llm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: providerId,
-          api_key: apiKey,
-          model_id: modelId || undefined,
-        }),
+        body: JSON.stringify({ model_id: geminiModel }),
       });
       const data = await res.json();
-
       if (data.success) {
         setProviders(data.providers || providers);
-        setEditingProvider(null);
-        setApiKey('');
-        setModelId('');
-        setMessage(`${providerId} API key saved successfully`);
+        setMessage('Geminiモデルを保存しました');
       } else {
-        setMessage(data.error || 'Failed to save');
+        setMessage(data.error || '保存に失敗しました');
       }
     } catch {
-      setMessage('Failed to save API key');
+      setMessage('保存に失敗しました');
     } finally {
       setSaving(false);
     }
-  };
-
-  const handleRemove = async (providerId: string) => {
-    setSaving(true);
-    try {
-      const res = await fetch('/api/settings/llm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: providerId, action: 'remove' }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        await fetchProviders();
-        setMessage(`${providerId} API key removed`);
-      }
-    } catch {
-      setMessage('Failed to remove');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const modelOptions: Record<string, string[]> = {
-    claude: ['claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001', 'claude-opus-4-6'],
-    chatgpt: ['gpt-4o', 'gpt-4o-mini', 'o1', 'o3-mini'],
-    gemini: ['gemini-2.0-flash', 'gemini-2.5-pro', 'gemini-2.5-flash'],
   };
 
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-        <p className="text-gray-600 mt-1">Configure LLM API keys for auto-execution</p>
+        <h1 className="text-3xl font-bold text-gray-900">設定</h1>
+        <p className="text-gray-600 mt-1">LLMプロバイダーとアカウント設定</p>
       </div>
 
       {message && (
@@ -109,93 +83,126 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* Google Account Section */}
+      <Card className="mb-6">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <h3 className="font-semibold text-lg">Googleアカウント</h3>
+              <Badge variant={session?.user ? 'success' : 'default'}>
+                {session?.user ? 'ログイン中' : '未ログイン'}
+              </Badge>
+            </div>
+            {session?.user && (
+              <Button size="sm" variant="secondary" onClick={() => signOut()}>
+                ログアウト
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardBody>
+          {session?.user ? (
+            <div className="flex items-center gap-3">
+              {session.user.image && (
+                <img
+                  src={session.user.image}
+                  alt=""
+                  className="w-10 h-10 rounded-full"
+                />
+              )}
+              <div>
+                <p className="font-medium text-gray-900">{session.user.name}</p>
+                <p className="text-sm text-gray-500">{session.user.email}</p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">
+              Googleアカウントでログインすると、Geminiの自動実行が利用可能になります。
+            </p>
+          )}
+        </CardBody>
+      </Card>
+
       {isLoading ? (
-        <p className="text-gray-500">Loading...</p>
+        <p className="text-gray-500">読み込み中...</p>
       ) : (
         <div className="space-y-4">
-          {providers.map((p) => (
-            <Card key={p.id}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <h3 className="font-semibold text-lg">{p.name}</h3>
-                    <Badge variant={p.apiConfigured ? 'success' : 'default'}>
-                      {p.apiConfigured ? 'Connected' : 'Not configured'}
-                    </Badge>
-                  </div>
-                  <div className="flex gap-2">
-                    {p.apiConfigured && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => handleRemove(p.id)}
-                        disabled={saving}
-                      >
-                        Remove
-                      </Button>
-                    )}
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        setEditingProvider(editingProvider === p.id ? null : p.id);
-                        setApiKey('');
-                        setModelId(p.defaultModel);
-                      }}
-                    >
-                      {p.apiConfigured ? 'Update' : 'Configure'}
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-
-              {editingProvider === p.id && (
-                <CardBody>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        API Key
-                      </label>
-                      <input
-                        type="password"
-                        value={apiKey}
-                        onChange={(e) => setApiKey(e.target.value)}
-                        placeholder={`Enter ${p.name} API key...`}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
+          {/* Gemini - Auto Execute */}
+          {providers
+            .filter((p) => p.id === 'gemini')
+            .map((p) => (
+              <Card key={p.id}>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <h3 className="font-semibold text-lg">{p.name}</h3>
+                      <Badge variant={p.autoExecuteReady ? 'success' : 'default'}>
+                        {p.autoExecuteReady ? '自動実行可能' : 'ログインが必要'}
+                      </Badge>
                     </div>
-                    <div>
+                    <Badge variant="info">自動実行</Badge>
+                  </div>
+                </CardHeader>
+                <CardBody>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Googleログインを利用して、Gemini APIを自動実行します。APIキーは不要です。
+                  </p>
+                  <div className="flex items-end gap-3">
+                    <div className="flex-1">
                       <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Model
+                        モデル
                       </label>
                       <select
-                        value={modelId}
-                        onChange={(e) => setModelId(e.target.value)}
+                        value={geminiModel}
+                        onChange={(e) => setGeminiModel(e.target.value)}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                       >
-                        {(modelOptions[p.id] || []).map((m) => (
-                          <option key={m} value={m}>{m}</option>
+                        {GEMINI_MODELS.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.label}
+                          </option>
                         ))}
                       </select>
                     </div>
-                    <div className="flex gap-2">
-                      <Button onClick={() => handleSave(p.id)} disabled={!apiKey.trim() || saving}>
-                        {saving ? 'Saving...' : 'Save'}
-                      </Button>
-                      <Button variant="secondary" onClick={() => setEditingProvider(null)}>
-                        Cancel
-                      </Button>
-                    </div>
+                    <Button onClick={handleSaveModel} disabled={saving} size="sm">
+                      {saving ? '保存中...' : '保存'}
+                    </Button>
                   </div>
                 </CardBody>
-              )}
+              </Card>
+            ))}
 
-              {!editingProvider && p.apiConfigured && (
+          {/* Claude & ChatGPT - WebUI */}
+          {providers
+            .filter((p) => p.id !== 'gemini')
+            .map((p) => (
+              <Card key={p.id}>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <h3 className="font-semibold text-lg">{p.name}</h3>
+                    </div>
+                    <Badge variant="default">手動 (WebUI)</Badge>
+                  </div>
+                </CardHeader>
                 <CardBody>
-                  <p className="text-sm text-gray-500">Model: {p.defaultModel}</p>
+                  <p className="text-sm text-gray-600 mb-3">
+                    プロンプトをコピーして、{p.name}のWebサイトに貼り付けて実行します。
+                  </p>
+                  <a
+                    href={p.uiUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
+                  >
+                    {p.uiUrl} を開く
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                  </a>
                 </CardBody>
-              )}
-            </Card>
-          ))}
+              </Card>
+            ))}
         </div>
       )}
     </div>

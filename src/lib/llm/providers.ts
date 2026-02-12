@@ -1,65 +1,79 @@
 /**
- * LLM Provider Configuration and API Execution
+ * LLM Provider Configuration
  *
- * Supports Claude (Anthropic), ChatGPT (OpenAI), and Gemini (Google).
- * API keys are stored encrypted in the database via LlmSetting model.
+ * - Gemini: Auto-execution via Google OAuth token (user's login session)
+ * - Claude / ChatGPT: Manual via Web UI (copy/paste prompt)
  */
 
 import { prisma } from '@/lib/db';
-import { encryptToken, decryptToken } from '@/lib/crypto/tokens';
-import Anthropic from '@anthropic-ai/sdk';
-import OpenAI from 'openai';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth/options';
 
 export interface LLMProvider {
   id: 'claude' | 'chatgpt' | 'gemini';
   name: string;
   uiUrl: string;
-  apiConfigured: boolean;
-  supportsApi: boolean;
+  supportsAutoExecute: boolean;
+  autoExecuteReady: boolean;
   defaultModel: string;
 }
 
-const PROVIDER_DEFAULTS: Record<string, { name: string; uiUrl: string; defaultModel: string }> = {
-  claude: {
-    name: 'Claude (Anthropic)',
-    uiUrl: 'https://claude.ai/new',
-    defaultModel: 'claude-sonnet-4-5-20250929',
-  },
-  chatgpt: {
-    name: 'ChatGPT (OpenAI)',
-    uiUrl: 'https://chat.openai.com/',
-    defaultModel: 'gpt-4o',
-  },
+const PROVIDER_DEFAULTS: Record<
+  string,
+  { name: string; uiUrl: string; defaultModel: string; supportsAutoExecute: boolean }
+> = {
   gemini: {
     name: 'Gemini (Google)',
     uiUrl: 'https://gemini.google.com/',
     defaultModel: 'gemini-2.0-flash',
+    supportsAutoExecute: true,
+  },
+  claude: {
+    name: 'Claude (Anthropic)',
+    uiUrl: 'https://claude.ai/new',
+    defaultModel: '',
+    supportsAutoExecute: false,
+  },
+  chatgpt: {
+    name: 'ChatGPT (OpenAI)',
+    uiUrl: 'https://chat.openai.com/',
+    defaultModel: '',
+    supportsAutoExecute: false,
   },
 };
 
 /**
- * Get all available LLM providers with their configuration status
+ * Get all available LLM providers with their status.
+ * Gemini is "ready" if the user has a Google OAuth session.
  */
 export async function getProviders(): Promise<LLMProvider[]> {
-  const settings = await prisma.llmSetting.findMany();
-  const settingsMap = new Map(settings.map((s) => [s.provider, s]));
+  let googleConnected = false;
 
-  return Object.entries(PROVIDER_DEFAULTS).map(([id, defaults]) => {
-    const setting = settingsMap.get(id);
-    return {
-      id: id as LLMProvider['id'],
-      name: defaults.name,
-      uiUrl: defaults.uiUrl,
-      apiConfigured: !!(setting?.encrypted_api_key && setting.is_enabled),
-      supportsApi: true,
-      defaultModel: setting?.model_id || defaults.defaultModel,
-    };
-  });
+  try {
+    const session = await getServerSession(authOptions);
+    googleConnected = !!(session?.user);
+  } catch {
+    // Outside request context or no session
+  }
+
+  // Check for stored model preference
+  const geminiSetting = await prisma.llmSetting
+    .findUnique({ where: { provider: 'gemini' } })
+    .catch(() => null);
+
+  return Object.entries(PROVIDER_DEFAULTS).map(([id, defaults]) => ({
+    id: id as LLMProvider['id'],
+    name: defaults.name,
+    uiUrl: defaults.uiUrl,
+    supportsAutoExecute: defaults.supportsAutoExecute,
+    autoExecuteReady: id === 'gemini' ? googleConnected : false,
+    defaultModel:
+      id === 'gemini' ? geminiSetting?.model_id || defaults.defaultModel : defaults.defaultModel,
+  }));
 }
 
 /**
- * Get a specific LLM provider by ID
+ * Get a specific provider
  */
 export async function getProvider(id: string): Promise<LLMProvider | undefined> {
   const providers = await getProviders();
@@ -67,131 +81,121 @@ export async function getProvider(id: string): Promise<LLMProvider | undefined> 
 }
 
 /**
- * Save API key for a provider (encrypted)
+ * Save Gemini model preference
  */
-export async function saveApiKey(
-  providerId: string,
-  apiKey: string,
-  modelId?: string
-): Promise<void> {
-  const encrypted = encryptToken(apiKey);
-
+export async function saveGeminiModel(modelId: string): Promise<void> {
   await prisma.llmSetting.upsert({
-    where: { provider: providerId },
+    where: { provider: 'gemini' },
     create: {
-      provider: providerId,
-      encrypted_api_key: encrypted,
-      model_id: modelId || PROVIDER_DEFAULTS[providerId]?.defaultModel || null,
+      provider: 'gemini',
+      encrypted_api_key: '__oauth__',
+      model_id: modelId,
       is_enabled: true,
     },
-    update: {
-      encrypted_api_key: encrypted,
-      ...(modelId !== undefined ? { model_id: modelId } : {}),
-      is_enabled: true,
-    },
+    update: { model_id: modelId },
   });
 }
 
 /**
- * Remove API key for a provider
+ * Refresh Google access token if expired.
+ * Returns a fresh access token.
  */
-export async function removeApiKey(providerId: string): Promise<void> {
-  await prisma.llmSetting.deleteMany({ where: { provider: providerId } });
-}
-
-/**
- * Get decrypted API key for a provider
- */
-async function getApiKey(providerId: string): Promise<string> {
-  const setting = await prisma.llmSetting.findUnique({
-    where: { provider: providerId },
+async function refreshGoogleToken(userId: string): Promise<string> {
+  const account = await prisma.account.findFirst({
+    where: { userId, provider: 'google' },
   });
 
-  if (!setting || !setting.encrypted_api_key || !setting.is_enabled) {
-    throw new Error(`API key not configured for ${providerId}. Please add it in Settings.`);
+  if (!account) {
+    throw new Error('Google account not linked. Please log in again.');
   }
 
-  return decryptToken(setting.encrypted_api_key);
-}
+  // Check if token is still valid (5 min buffer)
+  const now = Math.floor(Date.now() / 1000);
+  if (account.access_token && account.expires_at && account.expires_at > now + 300) {
+    return account.access_token;
+  }
 
-/**
- * Get model ID for a provider
- */
-async function getModelId(providerId: string): Promise<string> {
-  const setting = await prisma.llmSetting.findUnique({
-    where: { provider: providerId },
+  // Refresh the token
+  if (!account.refresh_token) {
+    throw new Error('No refresh token available. Please log in again with Google.');
+  }
+
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: process.env.GOOGLE_CLIENT_ID!,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+      grant_type: 'refresh_token',
+      refresh_token: account.refresh_token,
+    }),
   });
-  return setting?.model_id || PROVIDER_DEFAULTS[providerId]?.defaultModel || '';
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Failed to refresh Google token: ${err}`);
+  }
+
+  const tokens = await response.json();
+
+  // Update stored token
+  await prisma.account.update({
+    where: { id: account.id },
+    data: {
+      access_token: tokens.access_token,
+      expires_at: tokens.expires_in
+        ? Math.floor(Date.now() / 1000) + tokens.expires_in
+        : undefined,
+    },
+  });
+
+  return tokens.access_token;
 }
 
 /**
- * Execute prompt via LLM API
+ * Execute prompt via Gemini using Google OAuth token.
+ * Calls the Generative Language REST API directly with Bearer token.
  */
-export async function executeViaApi(
-  providerId: string,
-  prompt: string
+export async function executeWithGeminiOAuth(
+  userId: string,
+  prompt: string,
+  model?: string
 ): Promise<string> {
-  const apiKey = await getApiKey(providerId);
-  const modelId = await getModelId(providerId);
+  const accessToken = await refreshGoogleToken(userId);
 
-  switch (providerId) {
-    case 'claude':
-      return executeWithClaude(apiKey, modelId, prompt);
-    case 'chatgpt':
-      return executeWithChatGPT(apiKey, modelId, prompt);
-    case 'gemini':
-      return executeWithGemini(apiKey, modelId, prompt);
-    default:
-      throw new Error(`Unknown provider: ${providerId}`);
-  }
-}
+  const geminiModel = model || 'gemini-2.0-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
 
-async function executeWithClaude(apiKey: string, model: string, prompt: string): Promise<string> {
-  const client = new Anthropic({ apiKey });
-  const message = await client.messages.create({
-    model,
-    max_tokens: 4096,
-    messages: [{ role: 'user', content: prompt }],
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+    }),
   });
 
-  const textBlock = message.content.find((b) => b.type === 'text');
-  if (!textBlock || textBlock.type !== 'text') {
-    throw new Error('No text response from Claude');
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Gemini API error (${response.status}): ${errText}`);
   }
-  return textBlock.text;
-}
 
-async function executeWithChatGPT(apiKey: string, model: string, prompt: string): Promise<string> {
-  const client = new OpenAI({ apiKey });
-  const response = await client.chat.completions.create({
-    model,
-    messages: [{ role: 'user', content: prompt }],
-    max_tokens: 4096,
-  });
-
-  const content = response.choices[0]?.message?.content;
-  if (!content) {
-    throw new Error('No response from ChatGPT');
-  }
-  return content;
-}
-
-async function executeWithGemini(apiKey: string, model: string, prompt: string): Promise<string> {
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const genModel = genAI.getGenerativeModel({ model });
-  const result = await genModel.generateContent(prompt);
-  const text = result.response.text();
+  const data = await response.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
   if (!text) {
-    throw new Error('No response from Gemini');
+    throw new Error('No text response from Gemini');
   }
+
   return text;
 }
 
 /**
- * Get instructions for manual bridge workflow
+ * Get Web UI instructions for manual providers
  */
-export function getManualBridgeInstructions(providerId: string): {
+export function getWebUiInstructions(providerId: string): {
   provider: string;
   url: string;
   steps: string[];
@@ -203,12 +207,11 @@ export function getManualBridgeInstructions(providerId: string): {
     provider: defaults.name,
     url: defaults.uiUrl,
     steps: [
-      `Open ${defaults.name} in a new tab: ${defaults.uiUrl}`,
-      'Copy the generated prompt from this application',
-      `Paste the prompt into ${defaults.name}`,
-      'Wait for the LLM to generate a response',
-      'Copy the entire JSON response from the LLM',
-      'Paste the response back into this application to parse and save the results',
+      'プロンプトをコピー',
+      `${defaults.name}を新しいタブで開く: ${defaults.uiUrl}`,
+      'プロンプトを貼り付けて実行',
+      'JSON形式のレスポンスをコピー',
+      'このアプリに戻って結果を貼り付け',
     ],
   };
 }
