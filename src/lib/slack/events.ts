@@ -159,6 +159,7 @@ async function handleMessageEvent(
       text: event.text || '',
       raw_json: event as any,
       event_id: eventId,
+      created_at: event.ts ? new Date(parseFloat(event.ts) * 1000) : new Date(),
     },
   });
 
