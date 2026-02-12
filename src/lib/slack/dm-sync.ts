@@ -121,6 +121,7 @@ export async function syncWorkspaceDMs(workspaceId: string): Promise<DMSyncResul
               user_name: msg.user ? (userNameMap.get(msg.user) || null) : null,
               text: msg.text || '',
               raw_json: msg,
+              created_at: new Date(parseFloat(msg.ts) * 1000),
             },
           });
           result.messagesAdded++;
