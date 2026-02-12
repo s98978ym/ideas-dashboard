@@ -20,6 +20,14 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
+    async signIn({ account, profile }) {
+      console.log('[NextAuth] signIn callback', {
+        provider: account?.provider,
+        email: profile?.email,
+        hasAccessToken: !!account?.access_token,
+      });
+      return true;
+    },
     async session({ session, user }) {
       // Attach user ID to session
       if (session.user) {
@@ -43,8 +51,10 @@ export const authOptions: NextAuthOptions = {
   },
   pages: {
     signIn: '/login',
+    error: '/login',
   },
   session: {
     strategy: 'database',
   },
+  debug: process.env.NODE_ENV === 'development',
 };
