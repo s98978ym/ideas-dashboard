@@ -133,7 +133,7 @@ export default function ConversationsPage() {
                     size="sm"
                     variant="secondary"
                     onClick={() => {
-                      window.location.href = `/threads/${conv.id}`;
+                      window.location.href = `/conversations/${conv.id}`;
                     }}
                   >
                     View
