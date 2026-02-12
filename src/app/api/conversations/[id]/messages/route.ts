@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { getWorkspaceClient, resolveUserNames } from '@/lib/slack/client';
 
 export async function GET(
   request: NextRequest,
@@ -25,12 +26,48 @@ export async function GET(
     const [messages, totalCount] = await Promise.all([
       prisma.slackMessage.findMany({
         where: { channel_id: id },
-        orderBy: { created_at: 'asc' },
+        orderBy: { slack_ts: 'asc' },
         take: limit,
         skip: offset,
       }),
       prisma.slackMessage.count({ where: { channel_id: id } }),
     ]);
+
+    // Resolve missing user names from Slack API and fix timestamps in background
+    const needsUserName = messages.filter((m) => m.user_id && !m.user_name);
+    if (needsUserName.length > 0) {
+      try {
+        const client = await getWorkspaceClient(channel.workspace.id);
+        const userIds = [...new Set(needsUserName.map((m) => m.user_id!))];
+        const nameMap = await resolveUserNames(client, userIds);
+
+        // Update DB in background and patch local data
+        for (const msg of needsUserName) {
+          const name = nameMap.get(msg.user_id!);
+          if (name) {
+            msg.user_name = name;
+            prisma.slackMessage.update({
+              where: { id: msg.id },
+              data: { user_name: name },
+            }).catch(() => {});
+          }
+        }
+      } catch {
+        // If Slack API fails, continue with what we have
+      }
+    }
+
+    // Fix incorrect timestamps in background
+    for (const msg of messages) {
+      const correctDate = new Date(parseFloat(msg.slack_ts) * 1000);
+      if (Math.abs(msg.created_at.getTime() - correctDate.getTime()) > 60000) {
+        msg.created_at = correctDate;
+        prisma.slackMessage.update({
+          where: { id: msg.id },
+          data: { created_at: correctDate },
+        }).catch(() => {});
+      }
+    }
 
     return NextResponse.json({
       channel: {
@@ -47,7 +84,7 @@ export async function GET(
         text: m.text,
         user_id: m.user_id,
         user_name: m.user_name,
-        created_at: m.created_at,
+        created_at: new Date(parseFloat(m.slack_ts) * 1000).toISOString(),
         thread_ts: m.thread_ts,
         is_thread_reply: m.is_thread_reply,
       })),
