@@ -24,12 +24,15 @@ export async function POST(request: NextRequest) {
       select: { id: true, name: true, team_id: true },
     });
 
+    const body = await request.json().catch(() => ({}));
+    const force = body.force === true;
+
     const results: Record<string, any> = {};
 
     for (const ws of workspaces) {
-      console.log(`[DM Sync] Starting sync for workspace ${ws.name} (${ws.team_id})`);
+      console.log(`[DM Sync] Starting ${force ? 'FULL ' : ''}sync for workspace ${ws.name} (${ws.team_id})`);
       try {
-        results[ws.team_id] = await syncWorkspaceDMs(ws.id);
+        results[ws.team_id] = await syncWorkspaceDMs(ws.id, { force });
       } catch (err: any) {
         results[ws.team_id] = { error: err.message };
       }

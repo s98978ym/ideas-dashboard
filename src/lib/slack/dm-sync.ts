@@ -14,7 +14,7 @@ interface DMSyncResult {
  * Uses conversations.list(types=im,mpim) then conversations.history for each.
  * Idempotent: skips already-saved messages via unique constraint.
  */
-export async function syncWorkspaceDMs(workspaceId: string): Promise<DMSyncResult> {
+export async function syncWorkspaceDMs(workspaceId: string, options?: { force?: boolean }): Promise<DMSyncResult> {
   const result: DMSyncResult = { conversationsFound: 0, conversationsProcessed: 0, messagesAdded: 0, errors: [] };
 
   const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
@@ -75,8 +75,8 @@ export async function syncWorkspaceDMs(workspaceId: string): Promise<DMSyncResul
         },
       });
 
-      // Get messages since last sync
-      const oldest = channel.last_backfill_ts || undefined;
+      // Get messages since last sync (or all if force)
+      const oldest = options?.force ? undefined : (channel.last_backfill_ts || undefined);
       let msgCursor: string | undefined;
       let latestTs: string | undefined;
 
@@ -109,8 +109,18 @@ export async function syncWorkspaceDMs(workspaceId: string): Promise<DMSyncResul
         if (!msg.ts) continue;
 
         try {
-          await prisma.slackMessage.create({
-            data: {
+          const userName = msg.user ? (userNameMap.get(msg.user) || null) : null;
+          const createdAt = new Date(parseFloat(msg.ts) * 1000);
+
+          await prisma.slackMessage.upsert({
+            where: {
+              workspace_id_slack_channel_id_slack_ts: {
+                workspace_id: workspaceId,
+                slack_channel_id: conv.id,
+                slack_ts: msg.ts,
+              },
+            },
+            create: {
               workspace_id: workspaceId,
               channel_id: channel.id,
               slack_channel_id: conv.id,
@@ -118,19 +128,22 @@ export async function syncWorkspaceDMs(workspaceId: string): Promise<DMSyncResul
               thread_ts: msg.thread_ts || null,
               is_thread_reply: !!(msg.thread_ts && msg.thread_ts !== msg.ts),
               user_id: msg.user || null,
-              user_name: msg.user ? (userNameMap.get(msg.user) || null) : null,
+              user_name: userName,
               text: msg.text || '',
               raw_json: msg,
-              created_at: new Date(parseFloat(msg.ts) * 1000),
+              created_at: createdAt,
+            },
+            update: {
+              user_name: userName,
+              text: msg.text || '',
+              raw_json: msg,
+              created_at: createdAt,
             },
           });
           result.messagesAdded++;
           if (!latestTs || msg.ts > latestTs) latestTs = msg.ts;
         } catch (e: any) {
-          // Unique constraint = already exists, skip
-          if (!e.message?.includes('Unique constraint')) {
-            result.errors.push(`save msg ${msg.ts}: ${e.message}`);
-          }
+          result.errors.push(`save msg ${msg.ts}: ${e.message}`);
         }
       }
 
