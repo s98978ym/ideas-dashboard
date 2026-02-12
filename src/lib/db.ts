@@ -7,6 +7,21 @@
 
 import { PrismaClient } from '@prisma/client';
 
+// Ensure pgbouncer=true is set on DATABASE_URL for Supabase connection pooler compatibility
+function getDatasourceUrl(): string | undefined {
+  const url = process.env.DATABASE_URL;
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (!parsed.searchParams.has('pgbouncer')) {
+      parsed.searchParams.set('pgbouncer', 'true');
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 // PrismaClient is attached to the `global` object in development to prevent
 // exhausting your database connection limit.
 const globalForPrisma = globalThis as unknown as {
@@ -16,6 +31,7 @@ const globalForPrisma = globalThis as unknown as {
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
+    datasourceUrl: getDatasourceUrl(),
     log:
       process.env.NODE_ENV === 'development'
         ? ['query', 'error', 'warn']
