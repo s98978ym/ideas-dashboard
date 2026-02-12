@@ -1,8 +1,22 @@
 'use client';
 
 import { signIn } from 'next-auth/react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense } from 'react';
 
-export default function LoginPage() {
+const ERROR_MESSAGES: Record<string, string> = {
+  OAuthSignin: 'Google認証の開始に失敗しました。GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET を確認してください。',
+  OAuthCallback: 'Googleからのコールバック処理に失敗しました。リダイレクトURIを確認してください。',
+  OAuthCreateAccount: 'アカウント作成に失敗しました。データベース接続を確認してください。',
+  OAuthAccountNotLinked: 'このメールアドレスは別の方法で登録済みです。',
+  Callback: 'コールバック処理中にエラーが発生しました。NEXTAUTH_SECRET を確認してください。',
+  Default: 'ログイン中にエラーが発生しました。サーバーログを確認してください。',
+};
+
+function LoginContent() {
+  const searchParams = useSearchParams();
+  const error = searchParams.get('error');
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
       <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full text-center">
@@ -12,6 +26,16 @@ export default function LoginPage() {
         <p className="text-gray-600 mb-8">
           Googleアカウントでログインしてください
         </p>
+
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-md text-left">
+            <p className="text-red-800 text-sm font-medium mb-1">ログインエラー</p>
+            <p className="text-red-700 text-sm">
+              {ERROR_MESSAGES[error] || ERROR_MESSAGES.Default}
+            </p>
+            <p className="text-red-500 text-xs mt-2">エラーコード: {error}</p>
+          </div>
+        )}
 
         <button
           onClick={() => signIn('google', { callbackUrl: '/' })}
@@ -45,5 +69,17 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <p className="text-gray-500">読み込み中...</p>
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
   );
 }
