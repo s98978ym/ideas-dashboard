@@ -80,13 +80,13 @@ export default function WorkspacesPage() {
 
   const handleSyncDMs = async (workspaceId: string) => {
     try {
-      const response = await fetch(`/api/workspaces/${workspaceId}/sync-dms`, {
+      const response = await fetch(`/api/sync/dm/${workspaceId}`, {
         method: 'POST',
       });
 
       if (response.ok) {
         const data = await response.json();
-        alert(`DM sync initiated. ${data.dm_count || 0} DMs discovered.`);
+        alert(`DM sync completed. ${data.conversationsFound || 0} conversations found, ${data.messagesAdded || 0} messages added.`);
         fetchWorkspaces();
       } else {
         const errorData = await response.json();
