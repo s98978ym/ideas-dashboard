@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
     });
 
     // Convert database recipes to RecipeDefinition format
-    const customRecipeDefs: RecipeDefinition[] = customRecipes.map(recipe => ({
+    const customRecipeDefs = customRecipes.map(recipe => ({
       slug: recipe.slug,
       name: recipe.name,
       description: recipe.description || '',
@@ -34,16 +34,18 @@ export async function GET(request: NextRequest) {
       promptTemplate: recipe.prompt_template,
       variables: (recipe.variables as unknown as RecipeDefinition['variables']) || [],
       outputSchema: (recipe.output_schema as unknown as Record<string, unknown>) || {},
-      version: recipe.version
+      version: recipe.version,
+      is_active: true,
     }));
 
     // Combine with built-in recipes if requested
     let allRecipes = [...customRecipeDefs];
 
     if (includeBuiltin) {
-      const builtinToInclude = category
+      const builtinToInclude = (category
         ? BUILTIN_RECIPES.filter(r => r.category === category)
-        : BUILTIN_RECIPES;
+        : BUILTIN_RECIPES
+      ).map(r => ({ ...r, is_active: true }));
 
       allRecipes = [...builtinToInclude, ...customRecipeDefs];
     }
