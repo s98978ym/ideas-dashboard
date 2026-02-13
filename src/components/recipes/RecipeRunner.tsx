@@ -13,6 +13,18 @@ interface ProviderInfo {
   autoExecuteReady: boolean;
 }
 
+interface WorkspaceInfo {
+  id: string;
+  name: string;
+  channels: ChannelInfo[];
+}
+
+interface ChannelInfo {
+  id: string;
+  name: string;
+  is_private: boolean;
+}
+
 interface RecipeRunnerProps {
   recipeSlug: string;
   recipeName: string;
@@ -33,6 +45,7 @@ export function RecipeRunner({ recipeSlug, recipeName, onComplete, onClose }: Re
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [autoResult, setAutoResult] = useState('');
 
   useEffect(() => {
@@ -42,10 +55,18 @@ export function RecipeRunner({ recipeSlug, recipeName, onComplete, onClose }: Re
         setProviders(data.providers || []);
       })
       .catch(() => {});
+
+    fetch('/api/workspaces')
+      .then((r) => r.json())
+      .then((data) => {
+        setWorkspaces(data.workspaces || []);
+      })
+      .catch(() => {});
   }, []);
 
   const currentProvider = providers.find((p) => p.id === selectedProvider);
   const canAutoExecute = currentProvider?.supportsAutoExecute && currentProvider?.autoExecuteReady;
+  const selectedWorkspace = workspaces.find((ws) => ws.id === workspaceId);
 
   // Auto-execute with Gemini OAuth
   const handleAutoExecute = async () => {
@@ -175,17 +196,21 @@ export function RecipeRunner({ recipeSlug, recipeName, onComplete, onClose }: Re
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">ワークスペース</label>
-                <select value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md">
+                <select value={workspaceId} onChange={(e) => { setWorkspaceId(e.target.value); setChannelId(''); }} className="w-full px-3 py-2 border border-gray-300 rounded-md">
                   <option value="">選択してください...</option>
-                  <option value="ws_1">Workspace 1</option>
+                  {workspaces.map((ws) => (
+                    <option key={ws.id} value={ws.id}>{ws.name}</option>
+                  ))}
                 </select>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">チャンネル</label>
-                <select value={channelId} onChange={(e) => setChannelId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md">
+                <select value={channelId} onChange={(e) => setChannelId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md" disabled={!workspaceId}>
                   <option value="">選択してください...</option>
-                  <option value="ch_1">general</option>
+                  {selectedWorkspace?.channels.map((ch) => (
+                    <option key={ch.id} value={ch.id}>{ch.is_private ? '🔒 ' : '#'}{ch.name}</option>
+                  ))}
                 </select>
               </div>
 

@@ -93,12 +93,29 @@ export async function POST(request: NextRequest) {
     // Generate prompt
     const prompt = generatePrompt(recipe, promptVars);
 
+    // Ensure recipe exists in database (upsert built-in recipes on first use)
+    const dbRecipe = await prisma.recipe.upsert({
+      where: { slug: recipe.slug },
+      create: {
+        slug: recipe.slug,
+        name: recipe.name,
+        description: recipe.description,
+        category: recipe.category,
+        prompt_template: recipe.promptTemplate,
+        output_schema: recipe.outputSchema as object,
+        variables: recipe.variables as unknown as object,
+        version: recipe.version,
+        is_builtin: true,
+      },
+      update: {},
+    });
+
     // Create AnalysisRun record
     let analysisRunId: string | undefined;
     if (workspace_id) {
       const run = await prisma.analysisRun.create({
         data: {
-          recipe_id: recipe.slug,
+          recipe_id: dbRecipe.id,
           workspace_id,
           channel_id: channel_id || null,
           llm_provider: 'gemini',
