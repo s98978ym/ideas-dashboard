@@ -1,7 +1,16 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
+import { getServerSession } from 'next-auth';
 import { Button } from '@/components/ui/Button';
+import { authOptions } from '@/lib/auth/options';
 
 export default async function HomePage() {
+  const session = await getServerSession(authOptions);
+
+  if (session) {
+    redirect('/inbox');
+  }
+
   // In a real app, check if workspaces exist
   const hasWorkspaces = false;
 

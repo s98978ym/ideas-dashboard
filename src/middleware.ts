@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getToken } from 'next-auth/jwt';
 
 // Paths that should NOT require auth
 const PUBLIC_PATHS = [
@@ -24,10 +23,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Check next-auth session token
-  const token = await getToken({ req: request });
+  // Check for session cookie (database strategy uses a plain session ID, not JWT)
+  const sessionToken =
+    request.cookies.get('next-auth.session-token')?.value ||
+    request.cookies.get('__Secure-next-auth.session-token')?.value;
 
-  if (!token) {
+  if (!sessionToken) {
     // Redirect to login page for browser requests
     if (!pathname.startsWith('/api/')) {
       const loginUrl = new URL('/login', request.url);
