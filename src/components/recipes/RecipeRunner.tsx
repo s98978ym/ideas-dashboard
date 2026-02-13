@@ -87,7 +87,7 @@ export function RecipeRunner({ recipeSlug, recipeName, onComplete, onClose }: Re
       });
 
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || data.message || 'Execution failed');
+      if (!response.ok) throw new Error(data.message || data.error || 'Execution failed');
 
       setAutoResult(data.raw_result || JSON.stringify(data.parsed_data, null, 2));
       setCurrentStep('complete');
