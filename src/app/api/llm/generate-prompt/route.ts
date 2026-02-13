@@ -181,15 +181,32 @@ export async function POST(request: NextRequest) {
       providerUrls[provider.id] = provider.uiUrl;
     }
 
+    // Ensure recipe exists in database (upsert built-in recipes on first use)
+    const dbRecipe = await prisma.recipe.upsert({
+      where: { slug: recipe.slug },
+      create: {
+        slug: recipe.slug,
+        name: recipe.name,
+        description: recipe.description,
+        category: recipe.category,
+        prompt_template: recipe.promptTemplate,
+        output_schema: recipe.outputSchema as object,
+        variables: recipe.variables as unknown as object,
+        version: recipe.version,
+        is_builtin: true,
+      },
+      update: {},
+    });
+
     // Create an AnalysisRun record in pending state
     let analysisRunId: string | undefined;
     if (variables.workspaceId) {
       const analysisRun = await prisma.analysisRun.create({
         data: {
-          recipe_id: recipe.slug, // Note: This assumes recipe exists in DB or we need to handle built-ins
+          recipe_id: dbRecipe.id,
           workspace_id: variables.workspaceId,
           channel_id: variables.channelId || null,
-          llm_provider: 'claude', // Default provider
+          llm_provider: 'claude',
           status: 'pending',
           prompt_text: prompt
         }
