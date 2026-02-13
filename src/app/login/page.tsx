@@ -1,8 +1,8 @@
 'use client';
 
-import { signIn } from 'next-auth/react';
-import { useSearchParams } from 'next/navigation';
-import { Suspense } from 'react';
+import { signIn, useSession } from 'next-auth/react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { Suspense, useEffect } from 'react';
 
 const ERROR_MESSAGES: Record<string, string> = {
   OAuthSignin: 'Google認証の開始に失敗しました。GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET を確認してください。',
@@ -16,6 +16,14 @@ const ERROR_MESSAGES: Record<string, string> = {
 function LoginContent() {
   const searchParams = useSearchParams();
   const error = searchParams.get('error');
+  const { status } = useSession();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (status === 'authenticated') {
+      router.replace('/inbox');
+    }
+  }, [status, router]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -38,7 +46,7 @@ function LoginContent() {
         )}
 
         <button
-          onClick={() => signIn('google', { callbackUrl: '/' })}
+          onClick={() => signIn('google', { callbackUrl: '/inbox' })}
           className="w-full flex items-center justify-center gap-3 px-6 py-3 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors"
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24">
