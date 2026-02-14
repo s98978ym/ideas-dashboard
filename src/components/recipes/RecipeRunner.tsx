@@ -240,7 +240,7 @@ export function RecipeRunner({ recipeSlug, recipeName, onComplete, onClose }: Re
                         <Badge variant="success">自動実行可能</Badge>
                       )}
                       {p.supportsAutoExecute && !p.autoExecuteReady && (
-                        <Badge variant="default">要ログイン</Badge>
+                        <Badge variant="default">要APIキー設定</Badge>
                       )}
                       {!p.supportsAutoExecute && (
                         <Badge variant="default">手動 (WebUI)</Badge>

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getProviders, saveGeminiModel } from '@/lib/llm/providers';
+import { getProviders, saveGeminiModel, saveGeminiApiKey } from '@/lib/llm/providers';
 
 /** GET /api/settings/llm - List providers with status */
 export async function GET() {
@@ -14,22 +14,29 @@ export async function GET() {
   }
 }
 
-/** POST /api/settings/llm - Update Gemini model preference */
+/** POST /api/settings/llm - Update Gemini settings (model and/or API key) */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { model_id } = body;
+    const { model_id, api_key } = body;
 
-    if (!model_id) {
-      return NextResponse.json({ error: 'model_id is required' }, { status: 400 });
+    if (api_key) {
+      await saveGeminiApiKey(api_key);
     }
 
-    await saveGeminiModel(model_id);
+    if (model_id) {
+      await saveGeminiModel(model_id);
+    }
+
+    if (!model_id && !api_key) {
+      return NextResponse.json({ error: 'model_id or api_key is required' }, { status: 400 });
+    }
+
     const providers = await getProviders();
 
     return NextResponse.json({
       success: true,
-      message: 'Gemini model updated',
+      message: api_key ? 'APIキーを保存しました' : 'Geminiモデルを更新しました',
       providers,
     });
   } catch (error) {

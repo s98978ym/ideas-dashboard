@@ -19,7 +19,7 @@ import { authOptions } from '@/lib/auth/options';
 import { prisma } from '@/lib/db';
 import { getBuiltinRecipe, RecipeDefinition } from '@/lib/recipes/registry';
 import { generatePrompt, SlackMessageForPrompt, parseResult } from '@/lib/recipes/engine';
-import { executeWithGeminiOAuth } from '@/lib/llm/providers';
+import { executeWithGemini } from '@/lib/llm/providers';
 
 export async function POST(request: NextRequest) {
   try {
@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
     // Execute via Gemini OAuth
     let rawResult: string;
     try {
-      rawResult = await executeWithGeminiOAuth(userId, prompt, model);
+      rawResult = await executeWithGemini(prompt, model);
     } catch (err) {
       if (analysisRunId) {
         await prisma.analysisRun.update({
