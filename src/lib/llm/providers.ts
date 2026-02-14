@@ -1,13 +1,12 @@
 /**
  * LLM Provider Configuration
  *
- * - Gemini: Auto-execution via Google OAuth token (user's login session)
+ * - Gemini: Auto-execution via API key
  * - Claude / ChatGPT: Manual via Web UI (copy/paste prompt)
  */
 
 import { prisma } from '@/lib/db';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/options';
+import { encryptToken, decryptToken } from '@/lib/crypto/tokens';
 
 export interface LLMProvider {
   id: 'claude' | 'chatgpt' | 'gemini';
@@ -44,29 +43,22 @@ const PROVIDER_DEFAULTS: Record<
 
 /**
  * Get all available LLM providers with their status.
- * Gemini is "ready" if the user has a Google OAuth session.
+ * Gemini is "ready" if an API key has been configured.
  */
 export async function getProviders(): Promise<LLMProvider[]> {
-  let googleConnected = false;
-
-  try {
-    const session = await getServerSession(authOptions);
-    googleConnected = !!(session?.user);
-  } catch {
-    // Outside request context or no session
-  }
-
-  // Check for stored model preference
   const geminiSetting = await prisma.llmSetting
     .findUnique({ where: { provider: 'gemini' } })
     .catch(() => null);
+
+  const hasApiKey =
+    !!geminiSetting?.encrypted_api_key && geminiSetting.encrypted_api_key !== '__oauth__';
 
   return Object.entries(PROVIDER_DEFAULTS).map(([id, defaults]) => ({
     id: id as LLMProvider['id'],
     name: defaults.name,
     uiUrl: defaults.uiUrl,
     supportsAutoExecute: defaults.supportsAutoExecute,
-    autoExecuteReady: id === 'gemini' ? googleConnected : false,
+    autoExecuteReady: id === 'gemini' ? hasApiKey : false,
     defaultModel:
       id === 'gemini' ? geminiSetting?.model_id || defaults.defaultModel : defaults.defaultModel,
   }));
@@ -88,7 +80,7 @@ export async function saveGeminiModel(modelId: string): Promise<void> {
     where: { provider: 'gemini' },
     create: {
       provider: 'gemini',
-      encrypted_api_key: '__oauth__',
+      encrypted_api_key: '',
       model_id: modelId,
       is_enabled: true,
     },
@@ -97,81 +89,55 @@ export async function saveGeminiModel(modelId: string): Promise<void> {
 }
 
 /**
- * Refresh Google access token if expired.
- * Returns a fresh access token.
+ * Save Gemini API key (encrypted)
  */
-async function refreshGoogleToken(userId: string): Promise<string> {
-  const account = await prisma.account.findFirst({
-    where: { userId, provider: 'google' },
-  });
-
-  if (!account) {
-    throw new Error('Google account not linked. Please log in again.');
-  }
-
-  // Check if token is still valid (5 min buffer)
-  const now = Math.floor(Date.now() / 1000);
-  if (account.access_token && account.expires_at && account.expires_at > now + 300) {
-    return account.access_token;
-  }
-
-  // Refresh the token
-  if (!account.refresh_token) {
-    throw new Error('No refresh token available. Please log in again with Google.');
-  }
-
-  const response = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: process.env.GOOGLE_CLIENT_ID!,
-      client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-      grant_type: 'refresh_token',
-      refresh_token: account.refresh_token,
-    }),
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Failed to refresh Google token: ${err}`);
-  }
-
-  const tokens = await response.json();
-
-  // Update stored token
-  await prisma.account.update({
-    where: { id: account.id },
-    data: {
-      access_token: tokens.access_token,
-      expires_at: tokens.expires_in
-        ? Math.floor(Date.now() / 1000) + tokens.expires_in
-        : undefined,
+export async function saveGeminiApiKey(apiKey: string): Promise<void> {
+  const encrypted = encryptToken(apiKey);
+  await prisma.llmSetting.upsert({
+    where: { provider: 'gemini' },
+    create: {
+      provider: 'gemini',
+      encrypted_api_key: encrypted,
+      model_id: 'gemini-2.0-flash',
+      is_enabled: true,
     },
+    update: { encrypted_api_key: encrypted },
   });
-
-  return tokens.access_token;
 }
 
 /**
- * Execute prompt via Gemini using Google OAuth token.
- * Calls the Generative Language REST API directly with Bearer token.
+ * Get decrypted Gemini API key
  */
-export async function executeWithGeminiOAuth(
-  userId: string,
+export async function getGeminiApiKey(): Promise<string | null> {
+  const setting = await prisma.llmSetting.findUnique({ where: { provider: 'gemini' } });
+  if (!setting?.encrypted_api_key || setting.encrypted_api_key === '__oauth__') {
+    return null;
+  }
+  try {
+    return decryptToken(setting.encrypted_api_key);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Execute prompt via Gemini using API key.
+ */
+export async function executeWithGemini(
   prompt: string,
   model?: string
 ): Promise<string> {
-  const accessToken = await refreshGoogleToken(userId);
+  const apiKey = await getGeminiApiKey();
+  if (!apiKey) {
+    throw new Error('Gemini APIキーが設定されていません。設定ページでAPIキーを登録してください。');
+  }
 
   const geminiModel = model || 'gemini-2.0-flash';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`;
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
     }),

@@ -26,7 +26,9 @@ export default function SettingsPage() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [geminiModel, setGeminiModel] = useState('gemini-2.0-flash');
+  const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
+  const [savingKey, setSavingKey] = useState(false);
   const [message, setMessage] = useState('');
 
   useEffect(() => {
@@ -67,6 +69,31 @@ export default function SettingsPage() {
       setMessage('保存に失敗しました');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveApiKey = async () => {
+    if (!apiKey.trim()) return;
+    setSavingKey(true);
+    setMessage('');
+    try {
+      const res = await fetch('/api/settings/llm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: apiKey }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setProviders(data.providers || providers);
+        setApiKey('');
+        setMessage('APIキーを保存しました');
+      } else {
+        setMessage(data.error || '保存に失敗しました');
+      }
+    } catch {
+      setMessage('保存に失敗しました');
+    } finally {
+      setSavingKey(false);
     }
   };
 
@@ -151,16 +178,41 @@ export default function SettingsPage() {
                     <div className="flex items-center gap-3">
                       <h3 className="font-semibold text-lg">{p.name}</h3>
                       <Badge variant={p.autoExecuteReady ? 'success' : 'default'}>
-                        {p.autoExecuteReady ? '自動実行可能' : 'ログインが必要'}
+                        {p.autoExecuteReady ? '自動実行可能' : 'APIキー未設定'}
                       </Badge>
                     </div>
                     <Badge variant="info">自動実行</Badge>
                   </div>
                 </CardHeader>
                 <CardBody>
-                  <p className="text-sm text-gray-600 mb-3">
-                    Googleログインを利用して、Gemini APIを自動実行します。APIキーは不要です。
+                  <p className="text-sm text-gray-600 mb-4">
+                    Gemini APIキーを設定して自動実行を有効にします。
+                    <a
+                      href="https://aistudio.google.com/apikey"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:underline ml-1"
+                    >
+                      Google AI StudioでAPIキーを取得
+                    </a>
                   </p>
+                  <div className="flex items-end gap-3 mb-4">
+                    <div className="flex-1">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        APIキー
+                      </label>
+                      <input
+                        type="password"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        placeholder={p.autoExecuteReady ? '設定済み (変更する場合は新しいキーを入力)' : 'AIza...'}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                      />
+                    </div>
+                    <Button onClick={handleSaveApiKey} disabled={savingKey || !apiKey.trim()} size="sm">
+                      {savingKey ? '保存中...' : '保存'}
+                    </Button>
+                  </div>
                   <div className="flex items-end gap-3">
                     <div className="flex-1">
                       <label className="block text-sm font-medium text-gray-700 mb-1">
