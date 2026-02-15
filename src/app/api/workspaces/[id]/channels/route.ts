@@ -129,11 +129,13 @@ export async function GET(
               workspace_id: workspaceId,
               name: slackChannel.name,
               is_private: slackChannel.is_private,
-              is_monitored: true, // Default to monitored
+              is_monitored: true,
+              conversation_type: slackChannel.is_private ? 'private_channel' : 'channel',
             },
             update: {
               name: slackChannel.name,
               is_private: slackChannel.is_private,
+              conversation_type: slackChannel.is_private ? 'private_channel' : 'channel',
               updated_at: new Date(),
             },
           })

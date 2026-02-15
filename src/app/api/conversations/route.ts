@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { syncAllWorkspacesIfStale } from '@/lib/slack/channel-sync';
 
 export async function GET(request: NextRequest) {
   try {
     const workspaceId = request.nextUrl.searchParams.get('workspaceId');
     const type = request.nextUrl.searchParams.get('type'); // channel, private_channel, im, mpim, or null for all
+
+    // Sync channels from Slack if stale
+    await syncAllWorkspacesIfStale();
 
     const where: any = { is_monitored: true };
     if (workspaceId) where.workspace_id = workspaceId;
